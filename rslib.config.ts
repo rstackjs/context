@@ -8,6 +8,11 @@ export default defineConfig({
     entry: {
       index: './src/index.ts',
       mcp: './src/mcp.ts',
+      rsbuild: './src/rsbuild.ts',
+      rsdoctor: './src/rsdoctor.ts',
+      rslib: './src/rslib.ts',
+      rslint: './src/rslint.ts',
+      rstest: './src/rstest.ts',
     },
     define: {
       RSTACK_CONTEXT_VERSION: JSON.stringify(pkgJson.version),

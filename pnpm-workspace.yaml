@@ -8,3 +8,6 @@ minimumReleaseAgeExclude:
   - '@rslib/*'
   - '@rspack/*'
   - 'rsbuild-plugin-*'
+
+overrides:
+  '@rsdoctor/agent-cli': 'https://pkg.pr.new/@rsdoctor/agent-cli@1903'
