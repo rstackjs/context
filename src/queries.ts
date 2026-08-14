@@ -13,12 +13,13 @@ import type {
   ProductRootsResult,
   UnusedCandidatesResult,
 } from './analysisModel.ts';
+import { resolveArtifactProductRoots } from './artifactProducts.ts';
 import { getNonEmptyString, isRecordObject } from './guards.ts';
 import type { ContextDescriptor, ContextSnapshot } from './model.ts';
 import { compareStrings } from './order.ts';
 import { decodeCursor, encodeCursor } from './pagination.ts';
 import { normalizeModuleSelector } from './paths.ts';
-import { resolveProductRoots, toModuleRef } from './products.ts';
+import { toModuleRef } from './products.ts';
 import { traceModuleGraph, type TraversalResult } from './reachability.ts';
 import {
   readRsdoctorArtifact,
@@ -227,7 +228,7 @@ const loadAnalysis = async (
           issues: graph.issues,
         }
       : graph;
-  const product = await resolveProductRoots(workspaceRoot, context, graphForProducts);
+  const product = await resolveArtifactProductRoots(workspaceRoot, context, graphForProducts);
   return { provenance: { ...provenance, artifactBinding }, graph, product };
 };
 

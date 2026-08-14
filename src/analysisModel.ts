@@ -53,7 +53,7 @@ type ContractTarget = {
 type ProductRootSet = {
   contextId: string;
   packageRoot: string;
-  product: 'application' | 'library';
+  product: 'application' | 'library' | 'unknown';
   roots: ProductRoot[];
   contractTargets: ContractTarget[];
   bounds: string[];

@@ -287,11 +287,15 @@ edges, entry flags, chunk membership, optimizer bounds, and parse issues. Root s
 
 Published library analysis carries an open-world bound. A package contract target that cannot be
 mapped to a module is also returned as a bound instead of being silently ignored.
+When the selected context comes only from a non-build producer such as Rstest, an explicit raw
+Rsdoctor artifact can still supply entry and conservative roots. The result reports an unknown
+product and a `product-context-unavailable` bound, so artifact reachability remains available
+without inventing application or library contract semantics.
 
 ```mermaid
 flowchart LR
   Artifact["Explicit Rsdoctor artifact"] --> Normalize["Normalize module graph"]
-  Context["Selected application or library context"] --> Roots["Resolve product roots"]
+  Context["Selected context (product may be unknown)"] --> Roots["Resolve product roots"]
   Manifest["Library package.json"] --> Roots
   Normalize --> Roots
   Roots --> Traverse["Bounded graph traversal"]

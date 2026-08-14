@@ -66,13 +66,12 @@ test('uses raw artifact entry roots when only an Rstest context is available', a
       contextId: context.contextId,
       dataFile: 'rsdoctor-data.json',
     });
-    expect(roots.product).toMatchObject({
-      product: 'unknown',
-      roots: expect.arrayContaining([
-        expect.objectContaining({ kind: 'production-entry', module: { id: '1' } }),
-      ]),
-      bounds: expect.arrayContaining(['product-context-unavailable']),
-    });
+    expect(roots.product.product).toBe('unknown');
+    expect(roots.product.roots.map(({ kind, module }) => [kind, module.id])).toContainEqual([
+      'production-entry',
+      '1',
+    ]);
+    expect(roots.product.bounds).toContain('product-context-unavailable');
 
     const evidence = await readCodeEvidence(workspaceRoot, {
       path: 'src/live.ts',
