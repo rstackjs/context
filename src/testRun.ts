@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { createRequire } from 'node:module';
 import path from 'node:path';
 import type { RunRstestOptions, TestRunResult } from '@rstest/core/api';
 import {
@@ -20,13 +19,14 @@ import {
   validateExecutionRequest,
   type TestExecutionRequest,
 } from './execution.ts';
+import { isRecordObject } from './guards.ts';
 import { decodeCursor, encodeCursor } from './pagination.ts';
 import { toWorkspacePath } from './paths.ts';
 import {
   assessSnapshotFreshness,
+  collectContextInputFiles,
   createExplicitContextDescriptor,
   createExplicitRun,
-  recordContextInputFiles,
   resolveExplicitCaptureTarget,
   resolveInternalConfigPath,
   type ConfigTargetRunner,
@@ -82,6 +82,7 @@ type TestCaptureResult = {
   };
   errors?: TestCaptureError[];
   unhandledErrors?: TestErrorRecord[];
+  unreadableInputs?: string[];
 };
 
 type TestCaptureError = TestErrorRecord & {
@@ -121,7 +122,14 @@ const optionalString = <K extends keyof TestErrorRecord>(
 ): Pick<TestErrorRecord, K> | Record<string, never> =>
   value === undefined ? {} : ({ [key]: value } as Pick<TestErrorRecord, K>);
 
-const normalizeError = (error: TestRunResult['unhandledErrors'][number]): TestErrorRecord => ({
+// Rstest serializes `cause` chains recursively with its own cycle detection, but the depth is
+// still attacker/author controlled, so capture truncates rather than trusting the producer.
+const maxErrorCauseDepth = 8;
+
+const normalizeError = (
+  error: TestRunResult['unhandledErrors'][number],
+  depth = 0,
+): TestErrorRecord => ({
   name: error.name,
   message: error.message,
   ...optionalString('stack', error.stack),
@@ -129,7 +137,47 @@ const normalizeError = (error: TestRunResult['unhandledErrors'][number]): TestEr
   ...optionalString('actual', error.actual),
   ...optionalString('expected', error.expected),
   ...(error.retryCount === undefined ? {} : { retryCount: error.retryCount }),
+  ...(error.cause === undefined || depth >= maxErrorCauseDepth
+    ? {}
+    : { cause: normalizeError(error.cause, depth + 1) }),
 });
+
+const normalizeErrors = (
+  errors: ReadonlyArray<TestRunResult['unhandledErrors'][number]>,
+): TestErrorRecord[] => errors.map((error) => normalizeError(error));
+
+// Task metadata is free-form producer data. It is stored only when the whole value is JSON-safe,
+// and object keys are sorted so a re-capture of identical metadata serializes byte-identically.
+const maxMetaDepth = 8;
+
+const normalizeMetaValue = (value: unknown, depth: number): JsonValue | undefined => {
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+  if (depth >= maxMetaDepth) return undefined;
+  if (Array.isArray(value)) {
+    const items: JsonValue[] = [];
+    for (const entry of value) {
+      const item = normalizeMetaValue(entry, depth + 1);
+      if (item === undefined) return undefined;
+      items.push(item);
+    }
+    return items;
+  }
+  if (!isRecordObject(value)) return undefined;
+  const record: Record<string, JsonValue> = {};
+  for (const key of Object.keys(value).sort((left, right) => left.localeCompare(right))) {
+    const entry = normalizeMetaValue(value[key], depth + 1);
+    if (entry === undefined) return undefined;
+    record[key] = entry;
+  }
+  return record;
+};
+
+const optionalTestMeta = (value: unknown): Pick<TestCaseRecord, 'meta'> | Record<string, never> => {
+  if (!isRecordObject(value) || Object.keys(value).length === 0) return {};
+  const normalized = normalizeMetaValue(value, 0);
+  return isRecordObject(normalized) ? { meta: normalized as Record<string, JsonValue> } : {};
+};
 
 const compareTestCases = (left: TestCaseRecord, right: TestCaseRecord): number =>
   left.project.localeCompare(right.project) ||
@@ -147,11 +195,10 @@ const normalizeTestCase = (
   ...(result.parentNames === undefined ? {} : { parentNames: [...result.parentNames] }),
   status: result.status,
   ...(result.duration === undefined ? {} : { durationMs: result.duration }),
-  ...(result.errors === undefined ? {} : { errors: result.errors.map(normalizeError) }),
-  ...(result.retryErrors === undefined
-    ? {}
-    : { retryErrors: result.retryErrors.map(normalizeError) }),
+  ...(result.errors === undefined ? {} : { errors: normalizeErrors(result.errors) }),
+  ...(result.retryErrors === undefined ? {} : { retryErrors: normalizeErrors(result.retryErrors) }),
   ...(result.retryCount === undefined ? {} : { retryCount: result.retryCount }),
+  ...optionalTestMeta(result.meta),
 });
 
 const normalizeTestFile = (
@@ -162,7 +209,7 @@ const normalizeTestFile = (
   path: toWorkspacePath(workspaceRoot, result.testPath),
   status: result.status,
   ...(result.duration === undefined ? {} : { durationMs: result.duration }),
-  ...(result.errors === undefined ? {} : { errors: result.errors.map(normalizeError) }),
+  ...(result.errors === undefined ? {} : { errors: normalizeErrors(result.errors) }),
   tests: result.results
     .map((testResult) => normalizeTestCase(workspaceRoot, testResult))
     .sort(compareTestCases),
@@ -186,7 +233,7 @@ const normalizeTestFacet = (
     files: { ...result.stats.files },
   },
   durationMs: result.duration.total,
-  unhandledErrors: result.unhandledErrors.map(normalizeError),
+  unhandledErrors: normalizeErrors(result.unhandledErrors),
 });
 
 const testCaptureSelection = (request: TestSnapshotRequest): JsonValue => ({
@@ -210,9 +257,18 @@ const ensureWritten = (result: Awaited<ReturnType<typeof writeContextSnapshot>>)
 
 const loadRunRstest = async (): Promise<RunRstest> => (await import('@rstest/core/api')).runRstest;
 
-const hasCoverageProvider = (packageRoot: string): boolean => {
+const loadCoverageProviderLoader = async (): Promise<
+  typeof import('@rstest/core/internal/browser').loadCoverageProvider
+> => (await import('@rstest/core/internal/browser')).loadCoverageProvider;
+
+// Detection runs Rstest's own provider loader against the package under test, which is exactly
+// what `addCoveragePlugin` does when coverage is enabled, so this probe cannot disagree with the
+// resolution the run itself will perform. It imports the provider module (not just resolves it),
+// so a provider that fails to evaluate is reported as absent rather than crashing the capture.
+const hasCoverageProvider = async (packageRoot: string): Promise<boolean> => {
   try {
-    createRequire(path.join(packageRoot, 'package.json')).resolve('@rstest/coverage-istanbul');
+    const loadCoverageProvider = await loadCoverageProviderLoader();
+    await loadCoverageProvider({ provider: 'istanbul' }, packageRoot);
     return true;
   } catch {
     return false;
@@ -230,6 +286,18 @@ const validateRelatedSelection = (request: TestSnapshotRequest): void => {
       request.related.some((source) => source.length === 0))
   ) {
     throw new Error('related must contain from 1 to 200 non-empty source paths.');
+  }
+};
+
+const validateTestCaptureWiring = (
+  request: TestSnapshotRequest,
+  dependencies: TestCaptureDependencies,
+): void => {
+  if (request.related !== undefined && dependencies.resolveRelatedTests === undefined) {
+    throw new Error('Rstack test capture requires a related-test resolver.');
+  }
+  if (dependencies.withConfigTarget === undefined && dependencies.runRstest === undefined) {
+    throw new Error('Rstack test capture requires a config adapter.');
   }
 };
 
@@ -251,6 +319,7 @@ const captureTestSnapshot = async (
 ): Promise<TestCaptureResult> => {
   validateExecutionRequest(request.execution);
   validateRelatedSelection(request);
+  validateTestCaptureWiring(request, dependencies);
   const target = await resolveExplicitCaptureTarget(workspaceRoot, request);
   if (
     dependencies.isTestConfigured !== undefined &&
@@ -306,16 +375,14 @@ const captureTestSnapshot = async (
   let relation: TestFacet['relation'];
   try {
     let selectedFiles = request.files;
-    if (request.related !== undefined) {
-      if (dependencies.resolveRelatedTests === undefined) {
-        throw new Error('Rstack test capture requires a related-test resolver.');
-      }
+    if (request.related !== undefined && dependencies.resolveRelatedTests !== undefined) {
+      const resolveRelatedTests = dependencies.resolveRelatedTests;
       const sourceFiles = [
         ...new Set(request.related.map((source) => path.resolve(target.packageRoot, source))),
       ];
       const testFiles = [
         ...new Set(
-          await dependencies.resolveRelatedTests({
+          await resolveRelatedTests({
             packageRoot: target.packageRoot,
             configPath: target.configPath,
             sources: sourceFiles,
@@ -333,13 +400,7 @@ const captureTestSnapshot = async (
     if (result === undefined) {
       const runRstest = dependencies.runRstest ?? (await loadRunRstest());
       const withConfigTarget =
-        dependencies.withConfigTarget ??
-        (async (_configRoot, _configPath, action) => {
-          if (dependencies.runRstest === undefined) {
-            throw new Error('Rstack test capture requires a config adapter.');
-          }
-          return action();
-        });
+        dependencies.withConfigTarget ?? (async (_configRoot, _configPath, action) => action());
       result = await withConfigTarget(target.packageRoot, target.configPath, () =>
         runRstest({
           cwd: target.packageRoot,
@@ -409,7 +470,7 @@ const captureTestSnapshot = async (
             execution,
             result.coverage,
           );
-  const testInputs = await recordContextInputFiles(workspaceRoot, [
+  const recording = await collectContextInputFiles(workspaceRoot, [
     ...new Set([
       ...facet.files.map((file) => file.path),
       ...(facet.relation?.sources ?? []),
@@ -421,8 +482,13 @@ const captureTestSnapshot = async (
       file.digest === undefined ? [] : [{ path: file.path, digest: file.digest }],
     ) ?? [];
   const inputs = [
-    ...new Map([...testInputs, ...executionInputs].map((input) => [input.path, input])).values(),
+    ...new Map(
+      [...recording.inputs, ...executionInputs].map((input) => [input.path, input]),
+    ).values(),
   ].sort((left, right) => left.path.localeCompare(right.path));
+  const unreadableInputs = recording.unreadablePaths.filter(
+    (unreadablePath) => !inputs.some((input) => input.path === unreadablePath),
+  );
   const snapshot: ContextSnapshot = {
     schemaVersion: contextStoreSchemaVersion,
     snapshotId: dependencies.createSnapshotId?.() ?? `snap_${Date.now()}_${randomUUID()}`,
@@ -442,6 +508,7 @@ const captureTestSnapshot = async (
                 ? 'complete'
                 : 'partial',
           }),
+      ...(unreadableInputs.length === 0 ? {} : { source: 'partial' as const }),
     },
     facets: {
       test: facet as unknown as JsonValue,
@@ -489,6 +556,7 @@ const captureTestSnapshot = async (
         }),
     ...(errors.length === 0 ? {} : { errors }),
     ...(facet.unhandledErrors.length === 0 ? {} : { unhandledErrors: facet.unhandledErrors }),
+    ...(unreadableInputs.length === 0 ? {} : { unreadableInputs }),
   };
 };
 

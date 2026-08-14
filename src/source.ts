@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { access, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { sha256Hex } from './guards.ts';
-import { toWorkspacePath } from './paths.ts';
+import { resolveContainedPath, toWorkspacePath } from './paths.ts';
 import {
   contextStoreSchemaVersion,
   type ContextDescriptor,
@@ -40,6 +40,13 @@ type ExplicitCaptureTarget = {
   configPath?: string;
 };
 
+type ContextInputEntry = { input: ContextInputFile } | { unreadablePath: string };
+
+type ContextInputRecording = {
+  inputs: ContextInputFile[];
+  unreadablePaths: string[];
+};
+
 type ConfigTargetRunner = <T>(
   configRoot: string,
   configPath: string | undefined,
@@ -55,7 +62,12 @@ const rstackConfigFileNames = [
 
 const resolveInternalConfigPath = (moduleDirectory: string, fileName: string): string => {
   const siblingPath = path.join(moduleDirectory, fileName);
-  return existsSync(siblingPath) ? siblingPath : path.join(moduleDirectory, '..', fileName);
+  if (existsSync(siblingPath)) return siblingPath;
+  const parentPath = path.join(moduleDirectory, '..', fileName);
+  if (existsSync(parentPath)) return parentPath;
+  throw new Error(
+    `The bundled wrapper config "${fileName}" is not present next to "${moduleDirectory}". Supply an explicit wrapperConfigPath for this capture.`,
+  );
 };
 
 const readPackageName = async (packageRoot: string): Promise<string | undefined> => {
@@ -92,11 +104,15 @@ const resolveExplicitCaptureTarget = async (
   workspaceRoot: string,
   request: ExplicitCaptureTargetRequest,
 ): Promise<ExplicitCaptureTarget> => {
-  const packageRoot = path.resolve(workspaceRoot, request.packageRoot ?? '.');
+  const packageRoot = resolveContainedPath(
+    workspaceRoot,
+    'packageRoot',
+    request.packageRoot ?? '.',
+  );
   const configPath =
     request.configPath === undefined
       ? await findPackageConfig(packageRoot)
-      : path.resolve(workspaceRoot, request.configPath);
+      : resolveContainedPath(workspaceRoot, 'configPath', request.configPath);
   const packageName = await readPackageName(packageRoot);
 
   return {
@@ -133,19 +149,40 @@ const createExplicitRun = (options: ExplicitRunOptions): ContextRunManifest => (
   contexts: [options.context],
 });
 
+const collectContextInputFiles = async (
+  workspaceRoot: string,
+  filePaths: string[],
+): Promise<ContextInputRecording> => {
+  const entries = await Promise.all(
+    filePaths.map(async (filePath): Promise<ContextInputEntry> => {
+      const relativePath = toWorkspacePath(workspaceRoot, filePath) || '.';
+      try {
+        return {
+          input: {
+            path: relativePath,
+            digest: sha256Hex(await readFile(path.resolve(workspaceRoot, relativePath))),
+          },
+        };
+      } catch {
+        return { unreadablePath: relativePath };
+      }
+    }),
+  );
+
+  return {
+    inputs: entries
+      .flatMap((entry) => ('input' in entry ? [entry.input] : []))
+      .sort((left, right) => left.path.localeCompare(right.path)),
+    unreadablePaths: entries
+      .flatMap((entry) => ('unreadablePath' in entry ? [entry.unreadablePath] : []))
+      .sort((left, right) => left.localeCompare(right)),
+  };
+};
+
 const recordContextInputFiles = async (
   workspaceRoot: string,
   filePaths: string[],
-): Promise<ContextInputFile[]> =>
-  Promise.all(
-    filePaths.map(async (filePath) => {
-      const relativePath = toWorkspacePath(workspaceRoot, filePath) || '.';
-      return {
-        path: relativePath,
-        digest: sha256Hex(await readFile(path.resolve(workspaceRoot, relativePath))),
-      };
-    }),
-  ).then((inputs) => inputs.sort((left, right) => left.path.localeCompare(right.path)));
+): Promise<ContextInputFile[]> => (await collectContextInputFiles(workspaceRoot, filePaths)).inputs;
 
 const assessSnapshotFreshness = async (
   workspaceRoot: string,
@@ -180,10 +217,16 @@ const assessSnapshotFreshness = async (
 
 export {
   assessSnapshotFreshness,
+  collectContextInputFiles,
   createExplicitContextDescriptor,
   createExplicitRun,
   recordContextInputFiles,
   resolveExplicitCaptureTarget,
   resolveInternalConfigPath,
 };
-export type { ConfigTargetRunner, ExplicitContextOptions, ExplicitRunOptions };
+export type {
+  ConfigTargetRunner,
+  ContextInputRecording,
+  ExplicitContextOptions,
+  ExplicitRunOptions,
+};

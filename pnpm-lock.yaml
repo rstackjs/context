@@ -15,9 +15,6 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: 1.29.0
         version: 1.29.0(supports-color@7.2.0)(zod@4.4.3)
-      '@rsbuild/core':
-        specifier: 2.1.11
-        version: 2.1.11
       '@rsdoctor/agent-cli':
         specifier: https://pkg.pr.new/@rsdoctor/agent-cli@1903
         version: https://pkg.pr.new/@rsdoctor/agent-cli@1903
@@ -31,6 +28,9 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
     devDependencies:
+      '@rsbuild/core':
+        specifier: 2.1.11
+        version: 2.1.11
       '@rslib/core':
         specifier: 1.0.0-beta.3
         version: 1.0.0-beta.3(typescript@7.0.2)

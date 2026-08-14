@@ -64,13 +64,13 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
-    "@rsbuild/core": "2.1.11",
     "@rsdoctor/agent-cli": "0.1.1",
     "@rslint/core": "0.8.0",
     "@rstest/core": "0.11.6",
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@rsbuild/core": "2.1.11",
     "@rslib/core": "1.0.0-beta.3",
     "@rstest/coverage-istanbul": "0.11.6",
     "@types/node": "24.13.3",
@@ -79,10 +79,10 @@
     "typescript": "7.0.2"
   },
   "peerDependencies": {
-    "@rstest/coverage-istanbul": "0.11.6"
+    "@rsbuild/core": "^2.0.0"
   },
   "peerDependenciesMeta": {
-    "@rstest/coverage-istanbul": {
+    "@rsbuild/core": {
       "optional": true
     }
   },

@@ -6,9 +6,12 @@ import { contextStoreSchemaVersion, type ContextSnapshot } from '../src/model.ts
 import { validateRunManifest } from '../src/records.ts';
 import {
   assessSnapshotFreshness,
+  collectContextInputFiles,
   createExplicitContextDescriptor,
   createExplicitRun,
   recordContextInputFiles,
+  resolveExplicitCaptureTarget,
+  resolveInternalConfigPath,
 } from '../src/source.ts';
 import { withTempWorkspace } from './helpers.ts';
 
@@ -53,6 +56,71 @@ test('records sorted SHA-256 inputs and reports complete inputs as fresh', async
       ),
     ).resolves.toEqual({ state: 'fresh', changedPaths: [] });
   });
+});
+
+test('reports unreadable inputs instead of throwing while recording digests', async () => {
+  await withTempWorkspace('rstack-context-source-', async (workspaceRoot) => {
+    await mkdir(path.join(workspaceRoot, 'src'));
+    await writeFile(path.join(workspaceRoot, 'src', 'present.ts'), 'a');
+
+    await expect(
+      collectContextInputFiles(workspaceRoot, [
+        'src/missing.ts',
+        'src/present.ts',
+        'src/absent.ts',
+      ]),
+    ).resolves.toEqual({
+      inputs: [
+        {
+          path: 'src/present.ts',
+          digest: 'ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb',
+        },
+      ],
+      unreadablePaths: ['src/absent.ts', 'src/missing.ts'],
+    });
+    await expect(
+      recordContextInputFiles(workspaceRoot, ['src/missing.ts', 'src/present.ts']),
+    ).resolves.toEqual([
+      {
+        path: 'src/present.ts',
+        digest: 'ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb',
+      },
+    ]);
+  });
+});
+
+test('rejects capture targets that escape the checkout', async () => {
+  await withTempWorkspace('rstack-context-source-', async (workspaceRoot) => {
+    const containment =
+      'must be a non-empty checkout-relative path that stays inside the checkout.';
+
+    await expect(
+      resolveExplicitCaptureTarget(workspaceRoot, { packageRoot: '../../..' }),
+    ).rejects.toThrow(`packageRoot ${containment}`);
+    await expect(
+      resolveExplicitCaptureTarget(workspaceRoot, { packageRoot: path.join(workspaceRoot, 'src') }),
+    ).rejects.toThrow(`packageRoot ${containment}`);
+    await expect(
+      resolveExplicitCaptureTarget(workspaceRoot, { configPath: '../../../evil.config.ts' }),
+    ).rejects.toThrow(`configPath ${containment}`);
+    await expect(
+      resolveExplicitCaptureTarget(workspaceRoot, {
+        configPath: path.join(path.sep, 'etc', 'evil.config.ts'),
+      }),
+    ).rejects.toThrow(`configPath ${containment}`);
+    await expect(
+      resolveExplicitCaptureTarget(workspaceRoot, { packageRoot: 'packages/../packages/app' }),
+    ).resolves.toEqual({ packageRoot: path.join(workspaceRoot, 'packages', 'app') });
+  });
+});
+
+test('refuses to hand producers a bundled wrapper config that is absent', () => {
+  expect(() => resolveInternalConfigPath(import.meta.dirname, 'rstestConfig.js')).toThrow(
+    'The bundled wrapper config "rstestConfig.js" is not present',
+  );
+  expect(resolveInternalConfigPath(import.meta.dirname, 'helpers.ts')).toBe(
+    path.join(import.meta.dirname, 'helpers.ts'),
+  );
 });
 
 test('reports changed and missing inputs as stale in lexical order', async () => {

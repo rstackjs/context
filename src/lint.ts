@@ -56,6 +56,7 @@ type LintCaptureResult = {
   status: ContextRunStatus;
   freshness: ContextFreshness;
   summary: LintFacet['totals'];
+  unreadableInputs?: string[];
 };
 
 type RslintEngine = {
@@ -157,14 +158,23 @@ const compareMessages = (left: LintMessageRecord, right: LintMessageRecord): num
   compareStrings(left.ruleId ?? '', right.ruleId ?? '') ||
   compareStrings(left.message, right.message);
 
+const readLintSource = async (filePath: string): Promise<string | undefined> => {
+  try {
+    return await readFile(filePath, 'utf8');
+  } catch {
+    return undefined;
+  }
+};
+
 const normalizeResult = async (
   workspaceRoot: string,
   result: LintResult,
   includeFixPreview: boolean,
   textCode?: string,
-): Promise<LintFileRecord> => {
+): Promise<LintFileRecord | undefined> => {
   const filePath = toWorkspacePath(workspaceRoot, result.filePath);
-  const source = textCode ?? (await readFile(result.filePath, 'utf8'));
+  const source = textCode ?? (await readLintSource(result.filePath));
+  if (source === undefined) return undefined;
   const fileDigest = sha256Hex(source);
   const fixedOutput =
     includeFixPreview && result.output !== undefined && result.output !== source
@@ -233,6 +243,9 @@ const captureLintSnapshot = async (
   createRslint?: RslintFactory,
   adapter?: LintCaptureAdapter,
 ): Promise<LintCaptureResult> => {
+  if (adapter?.withConfigTarget === undefined && createRslint === undefined) {
+    throw new Error('Rstack lint capture requires a config adapter.');
+  }
   const includeFixPreview = request.includeFixPreview ?? false;
   const target = await resolveExplicitCaptureTarget(workspaceRoot, request);
   const wrapperConfigPath =
@@ -262,13 +275,7 @@ const captureLintSnapshot = async (
   let results: LintResult[];
   try {
     const withConfigTarget =
-      adapter?.withConfigTarget ??
-      (async (_configRoot, _configPath, action) => {
-        if (createRslint === undefined) {
-          throw new Error('Rstack lint capture requires a config adapter.');
-        }
-        return action();
-      });
+      adapter?.withConfigTarget ?? (async (_configRoot, _configPath, action) => action());
     results = await withConfigTarget(target.packageRoot, target.configPath, async () => {
       const engine = createRslint?.(options) ?? new (await import('@rslint/core')).Rslint(options);
       try {
@@ -325,18 +332,24 @@ const captureLintSnapshot = async (
     throw error;
   }
 
-  const files = (
-    await Promise.all(
-      results.map((result) =>
-        normalizeResult(
-          workspaceRoot,
-          result,
-          includeFixPreview,
-          request.mode === 'text' ? request.code : undefined,
-        ),
+  const normalized = await Promise.all(
+    results.map((result) =>
+      normalizeResult(
+        workspaceRoot,
+        result,
+        includeFixPreview,
+        request.mode === 'text' ? request.code : undefined,
       ),
+    ),
+  );
+  const files = normalized
+    .flatMap((file) => (file === undefined ? [] : [file]))
+    .sort((left, right) => compareStrings(left.path, right.path));
+  const unreadableInputs = results
+    .flatMap((result, index) =>
+      normalized[index] === undefined ? [toWorkspacePath(workspaceRoot, result.filePath)] : [],
     )
-  ).sort((left, right) => compareStrings(left.path, right.path));
+    .sort(compareStrings);
   const totals = totalsFor(files);
   const facet: LintFacet = {
     producer: 'rslint',
@@ -370,7 +383,10 @@ const captureLintSnapshot = async (
     sequence: 0,
     observedAt: new Date().toISOString(),
     status,
-    completeness: { lint: 'complete' },
+    completeness: {
+      lint: unreadableInputs.length === 0 ? 'complete' : 'partial',
+      ...(unreadableInputs.length === 0 ? {} : { source: 'partial' as const }),
+    },
     facets: { lint: facet },
     source,
   };
@@ -384,6 +400,7 @@ const captureLintSnapshot = async (
     status,
     freshness: await assessSnapshotFreshness(workspaceRoot, snapshot),
     summary: totals,
+    ...(unreadableInputs.length === 0 ? {} : { unreadableInputs }),
   };
 };
 
@@ -535,7 +552,8 @@ const getLintFixPreview = async (
   filePath: string,
 ): Promise<LintFixPreviewResult> => {
   const stored = await readContextSnapshotById(workspaceRoot, snapshotId);
-  const facet = stored === undefined ? undefined : asLintFacet(stored);
+  if (stored === undefined) throw new Error(`Unknown snapshot: ${snapshotId}`);
+  const facet = asLintFacet(stored);
   if (facet === undefined) throw new Error('The selected snapshot has no lint facet.');
   const matches = facet.files.filter(({ path: candidate }) => candidate === filePath);
   if (matches.length !== 1) throw new Error('The lint snapshot does not contain that exact path.');

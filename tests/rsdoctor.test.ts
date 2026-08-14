@@ -216,6 +216,29 @@ test('runs a real Rsdoctor catalog tool against a valid artifact fixture', async
   });
 });
 
+test('surfaces the underlying cause when the Rsdoctor executor fails', async () => {
+  await withTempWorkspace('rstack-rsdoctor-', async (workspaceRoot) => {
+    await writeArtifact(
+      workspaceRoot,
+      validDataFile,
+      JSON.stringify({ data: { summary: { costs: 'not-a-cost-list' } } }),
+    );
+
+    const failure = await analyzeRsdoctorArtifact(workspaceRoot, {
+      dataFile: validDataFile,
+      toolName: 'build_summary',
+    }).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    const error = failure as Error;
+    expect(error.cause).toBeInstanceOf(Error);
+    expect(error.message).toBe(
+      `Rsdoctor analysis failed. Cause: ${(error.cause as Error).message}`,
+    );
+    expect(error.message.length).toBeGreaterThan('Rsdoctor analysis failed. Cause: '.length);
+  });
+});
+
 test('maps every Rsdoctor catalog tool to its required artifact sections', async () => {
   const cases = [
     ['build_summary', ['summary']],

@@ -13,12 +13,13 @@ import type {
   ProductRootsResult,
   UnusedCandidatesResult,
 } from './analysisModel.ts';
+import { resolveArtifactProductRoots } from './artifactProducts.ts';
 import { getNonEmptyString, isRecordObject } from './guards.ts';
 import type { ContextDescriptor, ContextSnapshot } from './model.ts';
 import { compareStrings } from './order.ts';
 import { decodeCursor, encodeCursor } from './pagination.ts';
 import { normalizeModuleSelector } from './paths.ts';
-import { resolveProductRoots, toModuleRef } from './products.ts';
+import { toModuleRef } from './products.ts';
 import { traceModuleGraph, type TraversalResult } from './reachability.ts';
 import {
   readRsdoctorArtifact,
@@ -227,7 +228,7 @@ const loadAnalysis = async (
           issues: graph.issues,
         }
       : graph;
-  const product = await resolveProductRoots(workspaceRoot, context, graphForProducts);
+  const product = await resolveArtifactProductRoots(workspaceRoot, context, graphForProducts);
   return { provenance: { ...provenance, artifactBinding }, graph, product };
 };
 
@@ -386,21 +387,25 @@ const shortestRootPath = (
   return root === undefined ? undefined : { rootKind: root.kind, modules };
 };
 
+const productRootsFromAnalysis = ({
+  provenance,
+  graph,
+  product,
+}: LoadedAnalysis): ProductRootsResult => ({
+  provenance,
+  graph: {
+    moduleCount: graph.modules.length,
+    edgeCount: graph.edges.length,
+    issues: graph.issues,
+  },
+  product,
+});
+
 const readProductRoots = async (
   workspaceRoot: string,
   query: ArtifactQuery,
-): Promise<ProductRootsResult> => {
-  const { provenance, graph, product } = await loadAnalysis(workspaceRoot, query);
-  return {
-    provenance,
-    graph: {
-      moduleCount: graph.modules.length,
-      edgeCount: graph.edges.length,
-      issues: graph.issues,
-    },
-    product,
-  };
-};
+): Promise<ProductRootsResult> =>
+  productRootsFromAnalysis(await loadAnalysis(workspaceRoot, query));
 
 const findUnusedCandidates = async (
   workspaceRoot: string,
@@ -476,16 +481,15 @@ const findUnusedCandidates = async (
   };
 };
 
-const explainDeadCodeCandidate = async (
-  workspaceRoot: string,
-  query: ExplanationQuery,
-): Promise<DeadCodeExplanation> => {
+const explainAnalysisModule = (
+  { provenance, graph, product }: LoadedAnalysis,
+  query: Pick<ExplanationQuery, 'maxDepth' | 'module'>,
+): DeadCodeExplanation => {
   const maxDepth = validateMaxDepth(
     query.maxDepth,
     candidateTraversalOptions.maxDepth,
     candidateTraversalOptions.maxDepth,
   );
-  const { provenance, graph, product } = await loadAnalysis(workspaceRoot, query);
   if (!hasAuthoritativeGraph(graph)) {
     return {
       provenance,
@@ -574,6 +578,12 @@ const explainDeadCodeCandidate = async (
   };
 };
 
+const explainDeadCodeCandidate = async (
+  workspaceRoot: string,
+  query: ExplanationQuery,
+): Promise<DeadCodeExplanation> =>
+  explainAnalysisModule(await loadAnalysis(workspaceRoot, query), query);
+
 const traceModuleImpact = async (
   workspaceRoot: string,
   query: ImpactQuery,
@@ -619,5 +629,12 @@ const traceModuleImpact = async (
   };
 };
 
-export { explainDeadCodeCandidate, findUnusedCandidates, readProductRoots, traceModuleImpact };
-export type { ArtifactQuery, ExplanationQuery, ImpactQuery, UnusedCandidatesQuery };
+export {
+  explainAnalysisModule,
+  explainDeadCodeCandidate,
+  findUnusedCandidates,
+  loadAnalysis,
+  readProductRoots,
+  traceModuleImpact,
+};
+export type { ArtifactQuery, ExplanationQuery, ImpactQuery, LoadedAnalysis, UnusedCandidatesQuery };

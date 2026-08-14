@@ -104,6 +104,8 @@ type TestErrorRecord = {
   actual?: string;
   expected?: string;
   retryCount?: number;
+  /** Recursive cause chain reported by Rstest, truncated at a fixed depth on capture. */
+  cause?: TestErrorRecord;
 };
 
 type TestCaseRecord = {
@@ -116,6 +118,8 @@ type TestCaseRecord = {
   errors?: TestErrorRecord[];
   retryErrors?: TestErrorRecord[];
   retryCount?: number;
+  /** User-defined task metadata reported by Rstest; stored only when JSON-safe. */
+  meta?: Record<string, JsonValue>;
 };
 
 type TestFileRecord = {

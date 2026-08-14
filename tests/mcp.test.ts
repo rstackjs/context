@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -130,6 +130,197 @@ test('surfaces requested execution availability in test capture text', async () 
             completeness: 'unknown',
           },
         }),
+    },
+  );
+});
+
+test('captures a real test snapshot through injected capture dependencies', async () => {
+  let captureCount = 0;
+  await withClient(
+    async (client, workspaceRoot) => {
+      await mkdir(path.join(workspaceRoot, 'tests'), { recursive: true });
+      await writeFile(path.join(workspaceRoot, 'tests', 'math.test.ts'), 'test');
+
+      const result = await client.callTool({
+        name: 'test_snapshot',
+        arguments: { files: ['tests/math.test.ts'] },
+      });
+
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        runId: 'run_mcp_1',
+        snapshotId: 'snap_mcp_1',
+        status: 'pass',
+        summary: { files: 1, tests: 1 },
+      });
+      await expect(
+        client.callTool({ name: 'test_results', arguments: { snapshotId: 'snap_mcp_1' } }),
+      ).resolves.toMatchObject({
+        structuredContent: {
+          snapshotId: 'snap_mcp_1',
+          items: [{ path: 'tests/math.test.ts', name: 'adds' }],
+        },
+      });
+
+      const degraded = await client.callTool({
+        name: 'test_snapshot',
+        arguments: { files: ['tests/gone.test.ts'] },
+      });
+
+      expect(degraded.isError).not.toBe(true);
+      expect(degraded.content).toEqual([
+        { type: 'text', text: expect.stringContaining('unreadableInputs=1') },
+      ]);
+      expect(degraded.structuredContent).toMatchObject({
+        snapshotId: 'snap_mcp_2',
+        status: 'pass',
+        unreadableInputs: ['tests/gone.test.ts'],
+      });
+      await expect(
+        client.callTool({ name: 'snapshot_list', arguments: {} }),
+      ).resolves.toMatchObject({
+        structuredContent: {
+          items: expect.arrayContaining([
+            expect.objectContaining({
+              snapshotId: 'snap_mcp_2',
+              completeness: { test: 'complete', source: 'partial' },
+            }),
+          ]),
+        },
+      });
+    },
+    {
+      testCaptureDependencies: {
+        wrapperConfigPath: path.join(path.sep, 'wrapper', 'rstestConfig.js'),
+        createRunId: () => {
+          captureCount += 1;
+          return `run_mcp_${captureCount}`;
+        },
+        createSnapshotId: () => `snap_mcp_${captureCount}`,
+        runRstest: (options) => {
+          const testPath = path.join(
+            (options?.cwd as string | undefined) ?? '.',
+            (options?.files as string[] | undefined)?.[0] ?? 'tests/math.test.ts',
+          );
+          return Promise.resolve({
+            ok: true,
+            files: [
+              {
+                project: 'default',
+                testPath,
+                name: path.basename(testPath),
+                status: 'pass',
+                results: [{ project: 'default', testPath, name: 'adds', status: 'pass' }],
+              },
+            ],
+            stats: {
+              tests: { total: 1, passed: 1, failed: 0, skipped: 0, todo: 0 },
+              files: { total: 1, failed: 0 },
+            },
+            unhandledErrors: [],
+            duration: { total: 1 },
+          });
+        },
+      },
+    },
+  );
+});
+
+test('captures a real lint snapshot through an injected capture adapter', async () => {
+  await withClient(
+    async (client, workspaceRoot) => {
+      await writeFile(path.join(workspaceRoot, 'a.ts'), 'const a = 1;\n');
+
+      const result = await client.callTool({
+        name: 'lint_snapshot',
+        arguments: { mode: 'files', patterns: ['a.ts'] },
+      });
+
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        status: 'fail',
+        summary: { files: 1, errors: 1 },
+      });
+      await expect(
+        client.callTool({ name: 'diagnostics_list', arguments: { producer: 'rslint' } }),
+      ).resolves.toMatchObject({
+        structuredContent: {
+          items: [{ producer: 'rslint', ruleId: 'a-rule', severity: 'error', path: 'a.ts' }],
+        },
+      });
+    },
+    {
+      lintCaptureAdapter: {
+        wrapperConfigPath: path.join(path.sep, 'wrapper', 'rslintConfig.js'),
+        withConfigTarget: (_configRoot, _configPath, action) => action(),
+      },
+      createRslint: (options) => ({
+        lintFiles: () =>
+          Promise.resolve([
+            {
+              filePath: path.join(options.cwd ?? '.', 'a.ts'),
+              errorCount: 1,
+              warningCount: 0,
+              fixableErrorCount: 0,
+              fixableWarningCount: 0,
+              messages: [{ ruleId: 'a-rule', severity: 2, message: 'broken', line: 1, column: 1 }],
+            },
+          ]),
+        lintText: () => Promise.resolve([]),
+        close: () => Promise.resolve(),
+      }),
+    },
+  );
+});
+
+test('rejects capture targets that escape the checkout', async () => {
+  await withClient(
+    async (client) => {
+      const escaped = await client.callTool({
+        name: 'test_snapshot',
+        arguments: { packageRoot: '../../..' },
+      });
+      const escapedConfig = await client.callTool({
+        name: 'lint_snapshot',
+        arguments: { mode: 'files', configPath: '../../evil.config.ts' },
+      });
+
+      expect(escaped.isError).toBe(true);
+      expect(escaped.content).toEqual([
+        {
+          type: 'text',
+          text: expect.stringContaining(
+            'packageRoot must be a non-empty checkout-relative path that stays inside the checkout.',
+          ),
+        },
+      ]);
+      expect(escapedConfig.isError).toBe(true);
+      expect(escapedConfig.content).toEqual([
+        {
+          type: 'text',
+          text: expect.stringContaining(
+            'configPath must be a non-empty checkout-relative path that stays inside the checkout.',
+          ),
+        },
+      ]);
+      await expect(
+        client.callTool({ name: 'project_status', arguments: {} }),
+      ).resolves.toMatchObject({ structuredContent: { contexts: [] } });
+    },
+    {
+      testCaptureDependencies: {
+        wrapperConfigPath: path.join(path.sep, 'wrapper', 'rstestConfig.js'),
+        runRstest: () => {
+          throw new Error('must not run');
+        },
+      },
+      lintCaptureAdapter: {
+        wrapperConfigPath: path.join(path.sep, 'wrapper', 'rslintConfig.js'),
+        withConfigTarget: (_configRoot, _configPath, action) => action(),
+      },
+      createRslint: () => {
+        throw new Error('must not run');
+      },
     },
   );
 });

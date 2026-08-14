@@ -5,6 +5,7 @@ import type { TestRunResult } from '@rstest/core/api';
 import { expect, test } from '@rstest/core';
 import { listDiagnostics } from '../src/lint.ts';
 import { readProjectStatus } from '../src/status.ts';
+import { validateTestFacet } from '../src/records.ts';
 import { readContextSnapshotById } from '../src/store.ts';
 import {
   captureTestSnapshot,
@@ -13,6 +14,8 @@ import {
   type TestSnapshotRequest,
 } from '../src/testRun.ts';
 import { withTempWorkspace } from './helpers.ts';
+
+const wrapperConfigPath = path.join(path.sep, 'wrapper', 'rstestConfig.js');
 
 const createResult = (overrides: Partial<TestRunResult> = {}): TestRunResult => ({
   ok: true,
@@ -32,6 +35,7 @@ const createDependencies = (
   suffix: string,
 ): TestCaptureDependencies => ({
   hasCoverageProvider: () => true,
+  wrapperConfigPath,
   runRstest: (options) => {
     calls.push(options);
     return Promise.resolve(result);
@@ -41,7 +45,7 @@ const createDependencies = (
   now: () => new Date('2026-08-12T08:00:00.000Z'),
 });
 
-test('publishes the opt-in Istanbul provider as an exact optional peer', async () => {
+test('keeps the coverage provider out of the published dependency surface', async () => {
   const packageJson = JSON.parse(
     await readFile(new URL('../package.json', import.meta.url), 'utf8'),
   ) as {
@@ -51,12 +55,18 @@ test('publishes the opt-in Istanbul provider as an exact optional peer', async (
     peerDependenciesMeta?: Record<string, { optional?: boolean }>;
   };
 
+  // The Istanbul provider is resolved from the package under test, so declaring it as a
+  // peer of this package could not satisfy the runtime lookup; it stays a dev-only dependency.
   expect(packageJson.dependencies?.['@rstest/coverage-istanbul']).toBeUndefined();
   expect(packageJson.devDependencies?.['@rstest/coverage-istanbul']).toBe('0.11.6');
-  expect(packageJson.peerDependencies?.['@rstest/coverage-istanbul']).toBe('0.11.6');
-  expect(packageJson.peerDependenciesMeta?.['@rstest/coverage-istanbul']).toEqual({
-    optional: true,
-  });
+  expect(packageJson.peerDependencies?.['@rstest/coverage-istanbul']).toBeUndefined();
+  expect(packageJson.peerDependenciesMeta?.['@rstest/coverage-istanbul']).toBeUndefined();
+
+  // Rsbuild is a type-only integration surface: an optional peer for consumers of the
+  // plugin entry points, never a runtime dependency.
+  expect(packageJson.dependencies?.['@rsbuild/core']).toBeUndefined();
+  expect(packageJson.peerDependencies?.['@rsbuild/core']).toBe('^2.0.0');
+  expect(packageJson.peerDependenciesMeta?.['@rsbuild/core']).toEqual({ optional: true });
 });
 
 test('does not run Rstest when the host reports that tests are not configured', async () => {
@@ -277,6 +287,102 @@ test('resolves related source files before running and records the static test r
         testFiles: ['packages/app/tests/config.test.ts'],
       },
     });
+  });
+});
+
+test('persists a degraded snapshot when a related source file cannot be read', async () => {
+  await withTempWorkspace('rstack-context-test-run-', async (workspaceRoot) => {
+    const testPath = path.join(workspaceRoot, 'tests', 'config.test.ts');
+    await mkdir(path.dirname(testPath), { recursive: true });
+    await writeFile(testPath, 'test');
+    const calls: unknown[] = [];
+    const result = createResult({
+      files: [
+        {
+          project: 'default',
+          testPath,
+          name: 'config.test.ts',
+          status: 'pass',
+          results: [],
+        },
+      ],
+      stats: {
+        tests: { total: 0, passed: 0, failed: 0, skipped: 0, todo: 0 },
+        files: { total: 1, failed: 0 },
+      },
+    });
+
+    const capture = await captureTestSnapshot(
+      workspaceRoot,
+      { related: ['src/missing.ts'] },
+      {
+        ...createDependencies(result, calls, 'unreadable'),
+        resolveRelatedTests: () => Promise.resolve([testPath]),
+      },
+    );
+
+    expect(capture.unreadableInputs).toEqual(['src/missing.ts']);
+    const stored = await readContextSnapshotById(workspaceRoot, capture.snapshotId);
+    expect(stored?.snapshot.completeness).toEqual({ test: 'complete', source: 'partial' });
+    expect(stored?.snapshot.source).toEqual({
+      captureSelection: { related: ['src/missing.ts'] },
+      inputCompleteness: 'partial',
+      inputs: [
+        {
+          path: 'tests/config.test.ts',
+          digest: '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08',
+        },
+      ],
+    });
+    expect(stored?.snapshot.facets.test).toMatchObject({
+      relation: { sources: ['src/missing.ts'], testFiles: ['tests/config.test.ts'] },
+      unhandledErrors: [],
+    });
+  });
+});
+
+test('reports a missing config adapter before writing any run manifest', async () => {
+  await withTempWorkspace('rstack-context-test-run-', async (workspaceRoot) => {
+    await expect(captureTestSnapshot(workspaceRoot, {}, { wrapperConfigPath })).rejects.toThrow(
+      'Rstack test capture requires a config adapter.',
+    );
+    await expect(
+      captureTestSnapshot(
+        workspaceRoot,
+        { related: ['src/a.ts'] },
+        {
+          runRstest: () => {
+            throw new Error('must not run');
+          },
+          wrapperConfigPath,
+        },
+      ),
+    ).rejects.toThrow('Rstack test capture requires a related-test resolver.');
+
+    await expect(readProjectStatus(workspaceRoot)).resolves.toMatchObject({ contexts: [] });
+    await expect(listDiagnostics(workspaceRoot)).rejects.toThrow(
+      'No matching completed context snapshot was found.',
+    );
+  });
+});
+
+test('rejects capture targets that escape the checkout before writing any run manifest', async () => {
+  await withTempWorkspace('rstack-context-test-run-', async (workspaceRoot) => {
+    const calls: unknown[] = [];
+    const dependencies = createDependencies(createResult(), calls, 'escape');
+
+    await expect(
+      captureTestSnapshot(workspaceRoot, { packageRoot: '../../..' }, dependencies),
+    ).rejects.toThrow(
+      'packageRoot must be a non-empty checkout-relative path that stays inside the checkout.',
+    );
+    await expect(
+      captureTestSnapshot(workspaceRoot, { configPath: '../../evil.config.ts' }, dependencies),
+    ).rejects.toThrow(
+      'configPath must be a non-empty checkout-relative path that stays inside the checkout.',
+    );
+    expect(calls).toEqual([]);
+    await expect(readProjectStatus(workspaceRoot)).resolves.toMatchObject({ contexts: [] });
   });
 });
 
@@ -1117,6 +1223,7 @@ test('persists a thrown Rstest configuration error as a completed diagnostic sna
     const configError = new Error('configuration failed');
     configError.name = 'ConfigError';
     const dependencies: TestCaptureDependencies = {
+      wrapperConfigPath,
       runRstest: async () => {
         await expect(readProjectStatus(workspaceRoot)).resolves.toMatchObject({
           contexts: [{ runId: 'run_thrown', state: 'pending' }],
@@ -1273,6 +1380,167 @@ test('pages project-qualified results in deterministic identity order', async ()
       total: 1,
       items: [{ project: 'web', name: 'alpha', status: 'skip' }],
     });
+  });
+});
+
+const nestedCause = (depth: number): TestRunResult['unhandledErrors'][number] => ({
+  name: `Cause${depth}`,
+  message: `cause ${depth}`,
+  ...(depth === 0 ? {} : { cause: nestedCause(depth - 1) }),
+});
+
+const causeChainLength = (error: unknown): number => {
+  let links = 0;
+  let current = error;
+  while (
+    typeof current === 'object' &&
+    current !== null &&
+    (current as { cause?: unknown }).cause !== undefined
+  ) {
+    links += 1;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return links;
+};
+
+test('carries serialized error causes and task metadata through capture and listing', async () => {
+  await withTempWorkspace('rstack-context-test-run-', async (workspaceRoot) => {
+    const testPath = path.join(workspaceRoot, 'tests', 'fidelity.test.ts');
+    await mkdir(path.dirname(testPath), { recursive: true });
+    await writeFile(testPath, 'test');
+    const calls: unknown[] = [];
+    const result = createResult({
+      ok: false,
+      files: [
+        {
+          project: 'node',
+          testPath,
+          name: 'fidelity.test.ts',
+          status: 'fail',
+          results: [
+            {
+              project: 'node',
+              testPath,
+              name: 'reports a wrapped failure',
+              status: 'fail',
+              errors: [
+                {
+                  name: 'AssertionError',
+                  message: 'outer',
+                  cause: {
+                    name: 'TypeError',
+                    message: 'middle',
+                    cause: { name: 'RangeError', message: 'root' },
+                  },
+                },
+              ],
+              // Deliberately unsorted so the stored record proves key normalization.
+              meta: { zeta: [1, { beta: true }], alpha: 'first', nested: { b: null, a: 2 } },
+            },
+          ],
+        },
+      ],
+      stats: {
+        tests: { total: 1, passed: 0, failed: 1, skipped: 0, todo: 0 },
+        files: { total: 1, failed: 1 },
+      },
+    });
+
+    const capture = await captureTestSnapshot(
+      workspaceRoot,
+      {},
+      createDependencies(result, calls, 'fidelity'),
+    );
+    const stored = (await readContextSnapshotById(workspaceRoot, capture.snapshotId))?.snapshot
+      .facets.test;
+
+    // The snapshot only round-trips through the store if the strict validator accepts the
+    // new optional fields, so validation is the assertion that matters here.
+    expect(validateTestFacet(stored)).not.toBeUndefined();
+    expect(stored).toMatchObject({
+      files: [
+        {
+          tests: [
+            {
+              name: 'reports a wrapped failure',
+              errors: [
+                {
+                  name: 'AssertionError',
+                  message: 'outer',
+                  cause: {
+                    name: 'TypeError',
+                    message: 'middle',
+                    cause: { name: 'RangeError', message: 'root' },
+                  },
+                },
+              ],
+              meta: { alpha: 'first', nested: { a: 2, b: null }, zeta: [1, { beta: true }] },
+            },
+          ],
+        },
+      ],
+    });
+    const storedMeta = (
+      stored as unknown as { files: Array<{ tests: Array<{ meta: Record<string, unknown> }> }> }
+    ).files[0].tests[0].meta;
+    expect(Object.keys(storedMeta)).toEqual(['alpha', 'nested', 'zeta']);
+    expect(Object.keys(storedMeta.nested as Record<string, unknown>)).toEqual(['a', 'b']);
+
+    const listed = await listTestResults(workspaceRoot, {});
+    expect(listed.items[0]).toMatchObject({
+      meta: { alpha: 'first' },
+      errors: [{ cause: { cause: { name: 'RangeError' } } }],
+    });
+  });
+});
+
+test('truncates pathological cause chains and drops metadata that is not JSON-safe', async () => {
+  await withTempWorkspace('rstack-context-test-run-', async (workspaceRoot) => {
+    const testPath = path.join(workspaceRoot, 'tests', 'pathological.test.ts');
+    await mkdir(path.dirname(testPath), { recursive: true });
+    await writeFile(testPath, 'test');
+    const calls: unknown[] = [];
+    const result = createResult({
+      ok: false,
+      files: [
+        {
+          project: 'node',
+          testPath,
+          name: 'pathological.test.ts',
+          status: 'fail',
+          results: [
+            {
+              project: 'node',
+              testPath,
+              name: 'deeply wrapped',
+              status: 'fail',
+              errors: [nestedCause(30)],
+              meta: { fn: (() => undefined) as never },
+            },
+          ],
+        },
+      ],
+      stats: {
+        tests: { total: 1, passed: 0, failed: 1, skipped: 0, todo: 0 },
+        files: { total: 1, failed: 1 },
+      },
+    });
+
+    const capture = await captureTestSnapshot(
+      workspaceRoot,
+      {},
+      createDependencies(result, calls, 'pathological'),
+    );
+    const stored = (await readContextSnapshotById(workspaceRoot, capture.snapshotId))?.snapshot
+      .facets.test;
+    expect(validateTestFacet(stored)).not.toBeUndefined();
+    const storedTest = (
+      stored as unknown as {
+        files: Array<{ tests: Array<Record<string, unknown>> }>;
+      }
+    ).files[0].tests[0];
+    expect(causeChainLength((storedTest.errors as unknown[])[0])).toBe(8);
+    expect(storedTest.meta).toBeUndefined();
   });
 });
 

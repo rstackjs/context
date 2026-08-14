@@ -423,8 +423,9 @@ const analyzeRsdoctorArtifact = async (
       input,
       toolName: request.toolName,
     });
-  } catch {
-    throw new Error('Rsdoctor analysis failed.');
+  } catch (error) {
+    const cause = error instanceof Error ? ` Cause: ${error.message}` : '';
+    throw new Error(`Rsdoctor analysis failed.${cause}`, { cause: error });
   }
 
   const metadata = artifact.metadata;

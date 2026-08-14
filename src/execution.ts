@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { TestRunResult } from '@rstest/core/api';
+import type { CoverageMapData } from '@rstest/core/internal/browser';
 import type {
   TestExecutionBranch,
   TestExecutionFacet,
@@ -71,10 +72,20 @@ const normalizeLocation = (value: unknown): TestExecutionLocation | undefined =>
   };
 };
 
-const sortedRecordEntries = (value: Record<string, unknown>): Array<[string, unknown]> =>
+/**
+ * Per-file entry of an Istanbul coverage map as Rstest publishes it: the
+ * `FileCoverage | FileCoverageData` union is a fact of the published type, not something this
+ * module has to infer. The runtime guards below still stand, because persisted snapshots are
+ * re-read from disk and may be arbitrary JSON.
+ */
+type CoverageMapFileEntry = CoverageMapData[string];
+
+const sortedRecordEntries = <Value>(value: Record<string, Value>): Array<[string, Value]> =>
   Object.entries(value).sort(([left], [right]) => left.localeCompare(right));
 
-const unwrapCoverageFile = (value: unknown): Record<string, unknown> | undefined => {
+const unwrapCoverageFile = (
+  value: CoverageMapFileEntry | undefined,
+): Record<string, unknown> | undefined => {
   if (!isRecordObject(value)) return undefined;
   return isRecordObject(value.data) ? value.data : value;
 };
@@ -83,7 +94,7 @@ const normalizeExecutionFile = (
   workspaceRoot: string,
   packageRoot: string,
   mapPath: string,
-  rawValue: unknown,
+  rawValue: CoverageMapFileEntry | undefined,
 ): ExecutionFileCandidate => {
   const data = unwrapCoverageFile(rawValue);
   const sourcePath =
@@ -243,7 +254,7 @@ const normalizeExecutionFacet = async (
 ): Promise<TestExecutionFacet> => {
   if (!isRecordObject(coverage)) return unavailableExecutionFacet(request);
 
-  const candidates = sortedRecordEntries(coverage)
+  const candidates = sortedRecordEntries<CoverageMapFileEntry>(coverage)
     .map(([mapPath, value]) => normalizeExecutionFile(workspaceRoot, packageRoot, mapPath, value))
     .sort(
       (left, right) =>

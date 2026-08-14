@@ -1,6 +1,11 @@
 import { realpath } from 'node:fs/promises';
 import { sha256Hex } from './guards.ts';
-import { type ProjectContextStatus, type ProjectStatus } from './model.ts';
+import {
+  type ContextRunManifest,
+  type ContextSnapshot,
+  type ProjectContextStatus,
+  type ProjectStatus,
+} from './model.ts';
 import { compareStrings } from './order.ts';
 import { assessSnapshotFreshness } from './source.ts';
 import { readContextWorkspaceStatus } from './store.ts';
@@ -24,6 +29,25 @@ const compareProjectContexts = (
   return 0;
 };
 
+type SnapshotObservation = { run: ContextRunManifest; snapshot: ContextSnapshot };
+
+const isNewerRun = (current: ContextRunManifest, candidate: ContextRunManifest): boolean =>
+  compareStrings(current.startedAt, candidate.startedAt) < 0 ||
+  (current.startedAt === candidate.startedAt && compareStrings(current.runId, candidate.runId) < 0);
+
+// A run without a snapshot (an aborted build, a capture that only wrote its manifest) must not hide
+// the newest completed snapshot recorded for the same context by an earlier run.
+const newerObservation = (
+  current: SnapshotObservation | undefined,
+  candidate: SnapshotObservation,
+): SnapshotObservation =>
+  current === undefined ||
+  compareStrings(current.snapshot.observedAt, candidate.snapshot.observedAt) < 0 ||
+  (current.snapshot.observedAt === candidate.snapshot.observedAt &&
+    isNewerRun(current.run, candidate.run))
+    ? candidate
+    : current;
+
 const readProjectStatus = async (workspaceRoot: string): Promise<ProjectStatus> => {
   const workspace = await readContextWorkspaceStatus(workspaceRoot);
   const workspacePath = await realpath(workspaceRoot);
@@ -32,38 +56,40 @@ const readProjectStatus = async (workspaceRoot: string): Promise<ProjectStatus> 
     string,
     (typeof workspace.runs)[number]['contexts'][number] & {
       run: (typeof workspace.runs)[number]['run'];
+      observation?: SnapshotObservation;
     }
   >();
 
   for (const { run, contexts } of workspace.runs) {
     for (const contextStatus of contexts) {
       const current = currentByContextId.get(contextStatus.context.contextId);
-      if (
-        current === undefined ||
-        compareStrings(current.run.startedAt, run.startedAt) < 0 ||
-        (current.run.startedAt === run.startedAt &&
-          compareStrings(current.run.runId, run.runId) < 0)
-      ) {
-        currentByContextId.set(contextStatus.context.contextId, {
-          ...contextStatus,
-          run,
-        });
-      }
+      const observation =
+        contextStatus.latestSnapshot === undefined
+          ? current?.observation
+          : newerObservation(current?.observation, { run, snapshot: contextStatus.latestSnapshot });
+      const newest =
+        current === undefined || isNewerRun(current.run, run)
+          ? { context: contextStatus.context, run }
+          : { context: current.context, run: current.run };
+      currentByContextId.set(contextStatus.context.contextId, {
+        ...newest,
+        ...(observation === undefined ? {} : { observation }),
+      });
     }
   }
 
   const contexts = (
     await Promise.all(
-      [...currentByContextId.values()].map(async ({ run, context, latestSnapshot }) => ({
+      [...currentByContextId.values()].map(async ({ run, context, observation }) => ({
         runId: run.runId,
         producer: run.producer,
         context,
-        state: latestSnapshot === undefined ? ('pending' as const) : ('ready' as const),
-        ...(latestSnapshot === undefined
+        state: observation === undefined ? ('pending' as const) : ('ready' as const),
+        ...(observation === undefined
           ? {}
           : {
-              latestSnapshot,
-              freshness: await assessSnapshotFreshness(workspaceRoot, latestSnapshot),
+              latestSnapshot: observation.snapshot,
+              freshness: await assessSnapshotFreshness(workspaceRoot, observation.snapshot),
             }),
         startedAt: run.startedAt,
       })),

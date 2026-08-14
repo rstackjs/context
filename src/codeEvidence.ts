@@ -12,7 +12,7 @@ import type {
   TestFacet,
 } from './model.ts';
 import { normalizeModuleSelector, toWorkspacePath } from './paths.ts';
-import { explainDeadCodeCandidate, readProductRoots } from './queries.ts';
+import { explainAnalysisModule, loadAnalysis } from './queries.ts';
 import { assessSnapshotFreshness } from './source.ts';
 import { readContextSnapshotById, readContextSnapshots } from './store.ts';
 
@@ -254,7 +254,9 @@ const testOutcome = (
     }
   }
   if (
-    facet.unhandledErrors.length > 0 ||
+    // A run-level unhandled error is global to the snapshot, so it only attributes to this source
+    // when the run was provably isolated to it. An exact test-file record reports its own outcome.
+    (basis === 'related-selection' && facet.unhandledErrors.length > 0) ||
     matchingFiles.some((file) => file.status === 'fail' || (file.errors?.length ?? 0) > 0) ||
     matchingTests.some((test) => test.status === 'fail')
   ) {
@@ -322,23 +324,20 @@ const moduleEvidence = async (
   query: Required<Pick<CodeEvidenceQuery, 'contextId' | 'dataFile'>> &
     Pick<CodeEvidenceQuery, 'maxDepth' | 'module'> & { path: string },
 ): Promise<DeadCodeExplanation> => {
+  // The Rsdoctor artifact is read and normalized once per call; every module axis below reuses it.
+  const analysis = await loadAnalysis(workspaceRoot, query);
   if (query.module !== undefined) {
-    return explainDeadCodeCandidate(workspaceRoot, {
-      contextId: query.contextId,
-      dataFile: query.dataFile,
-      module: query.module,
-      maxDepth: query.maxDepth,
-    });
+    return explainAnalysisModule(analysis, { module: query.module, maxDepth: query.maxDepth });
   }
-  const roots = await readProductRoots(workspaceRoot, query);
+  const { product } = analysis;
   const packageRelativePath =
-    roots.product.packageRoot === '.'
+    product.packageRoot === '.'
       ? query.path
-      : query.path.startsWith(`${roots.product.packageRoot}/`)
-        ? query.path.slice(roots.product.packageRoot.length + 1)
+      : query.path.startsWith(`${product.packageRoot}/`)
+        ? query.path.slice(product.packageRoot.length + 1)
         : query.path;
   const insufficientEvidence = (): DeadCodeExplanation => ({
-    provenance: roots.provenance,
+    provenance: analysis.provenance,
     classification: 'insufficient-evidence',
     state: {
       productionReachability: 'unknown',
@@ -349,15 +348,10 @@ const moduleEvidence = async (
     paths: [],
     evidence: ['No unique artifact module matched the exact source path.'],
     analysisTruncated: false,
-    bounds: [...roots.product.bounds, 'source-path-module-match-unavailable'],
+    bounds: [...product.bounds, 'source-path-module-match-unavailable'],
   });
   try {
-    return await explainDeadCodeCandidate(workspaceRoot, {
-      contextId: query.contextId,
-      dataFile: query.dataFile,
-      module: query.path,
-      maxDepth: query.maxDepth,
-    });
+    return explainAnalysisModule(analysis, { module: query.path, maxDepth: query.maxDepth });
   } catch (error) {
     if (error instanceof Error && /^Ambiguous module selector:/u.test(error.message)) {
       return insufficientEvidence();
@@ -365,9 +359,7 @@ const moduleEvidence = async (
     if (!(error instanceof Error) || !/^Unknown module selector:/u.test(error.message)) throw error;
     if (packageRelativePath !== query.path) {
       try {
-        return await explainDeadCodeCandidate(workspaceRoot, {
-          contextId: query.contextId,
-          dataFile: query.dataFile,
+        return explainAnalysisModule(analysis, {
           module: packageRelativePath,
           maxDepth: query.maxDepth,
         });

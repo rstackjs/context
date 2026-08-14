@@ -117,7 +117,24 @@ const validateLintFacet = (value: unknown): LintFacet | undefined => {
   return value as LintFacet;
 };
 
-const isTestError = (value: unknown): boolean =>
+const isJsonValue = (value: unknown): boolean => {
+  if (
+    value === null ||
+    typeof value === 'boolean' ||
+    typeof value === 'string' ||
+    (typeof value === 'number' && Number.isFinite(value))
+  ) {
+    return true;
+  }
+  if (Array.isArray(value)) return value.every(isJsonValue);
+  return isRecordObject(value) && Object.values(value).every(isJsonValue);
+};
+
+// Mirrors the capture-side truncation in normalizeError: a stored cause chain deeper than this
+// was not produced by this writer, so it is rejected rather than walked without bound.
+const maxTestErrorCauseDepth = 8;
+
+const isTestError = (value: unknown, depth = 0): boolean =>
   isRecordObject(value) &&
   typeof value.name === 'string' &&
   typeof value.message === 'string' &&
@@ -125,7 +142,15 @@ const isTestError = (value: unknown): boolean =>
   isOptionalString(value.diff) &&
   isOptionalString(value.actual) &&
   isOptionalString(value.expected) &&
-  (value.retryCount === undefined || isNonNegativeInteger(value.retryCount));
+  (value.retryCount === undefined || isNonNegativeInteger(value.retryCount)) &&
+  (value.cause === undefined ||
+    (depth < maxTestErrorCauseDepth && isTestError(value.cause, depth + 1)));
+
+const areTestErrors = (value: unknown): boolean =>
+  Array.isArray(value) && value.every((entry) => isTestError(entry));
+
+const isTestMeta = (value: unknown): boolean =>
+  isRecordObject(value) && Object.values(value).every(isJsonValue);
 
 const isTestCase = (value: unknown): boolean =>
   isRecordObject(value) &&
@@ -137,11 +162,10 @@ const isTestCase = (value: unknown): boolean =>
       value.parentNames.every((entry) => typeof entry === 'string'))) &&
   testStatuses.has(value.status as string) &&
   (value.durationMs === undefined || isNonNegativeNumber(value.durationMs)) &&
-  (value.errors === undefined ||
-    (Array.isArray(value.errors) && value.errors.every(isTestError))) &&
-  (value.retryErrors === undefined ||
-    (Array.isArray(value.retryErrors) && value.retryErrors.every(isTestError))) &&
-  (value.retryCount === undefined || isNonNegativeInteger(value.retryCount));
+  (value.errors === undefined || areTestErrors(value.errors)) &&
+  (value.retryErrors === undefined || areTestErrors(value.retryErrors)) &&
+  (value.retryCount === undefined || isNonNegativeInteger(value.retryCount)) &&
+  (value.meta === undefined || isTestMeta(value.meta));
 
 const isTestFile = (value: unknown): boolean =>
   isRecordObject(value) &&
@@ -149,8 +173,7 @@ const isTestFile = (value: unknown): boolean =>
   isRecordPath(value.path) &&
   testStatuses.has(value.status as string) &&
   (value.durationMs === undefined || isNonNegativeNumber(value.durationMs)) &&
-  (value.errors === undefined ||
-    (Array.isArray(value.errors) && value.errors.every(isTestError))) &&
+  (value.errors === undefined || areTestErrors(value.errors)) &&
   Array.isArray(value.tests) &&
   value.tests.every(isTestCase);
 
@@ -179,25 +202,11 @@ const validateTestFacet = (value: unknown): TestFacet | undefined => {
     !isNonNegativeInteger(value.stats.files.total) ||
     !isNonNegativeInteger(value.stats.files.failed) ||
     !isNonNegativeNumber(value.durationMs) ||
-    !Array.isArray(value.unhandledErrors) ||
-    !value.unhandledErrors.every(isTestError)
+    !areTestErrors(value.unhandledErrors)
   ) {
     return undefined;
   }
   return value as TestFacet;
-};
-
-const isJsonValue = (value: unknown): boolean => {
-  if (
-    value === null ||
-    typeof value === 'boolean' ||
-    typeof value === 'string' ||
-    (typeof value === 'number' && Number.isFinite(value))
-  ) {
-    return true;
-  }
-  if (Array.isArray(value)) return value.every(isJsonValue);
-  return isRecordObject(value) && Object.values(value).every(isJsonValue);
 };
 
 const isSnapshotSource = (value: unknown): boolean => {

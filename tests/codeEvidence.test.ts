@@ -442,6 +442,40 @@ test('distinguishes absent exact test records from matching skipped or todo reco
   });
 });
 
+test('attributes run-level unhandled errors to an isolated related selection only', async () => {
+  await withTempWorkspace('rstack-code-evidence-', async (workspaceRoot) => {
+    const facet = testFacet('tests/value.test.ts', 'pass', 'unused');
+    facet.unhandledErrors = [{ name: 'Error', message: 'unhandled rejection in another file' }];
+    facet.relation = { sources: ['src/value.ts'], testFiles: ['tests/value.test.ts'] };
+    await writeSnapshot(workspaceRoot, {
+      producer: 'rstest',
+      snapshotId: 'snap_unhandled',
+      observedAt: '2026-08-13T01:00:00.000Z',
+      facets: { test: facet as unknown as JsonValue },
+      completeness: { test: 'complete' },
+    });
+
+    await expect(
+      readCodeEvidence(workspaceRoot, { path: 'tests/value.test.ts' }),
+    ).resolves.toMatchObject({
+      testOutcome: {
+        state: 'passed',
+        basis: 'exact-path',
+        matchingFiles: 1,
+        matchingTests: 1,
+      },
+    });
+    await expect(readCodeEvidence(workspaceRoot, { path: 'src/value.ts' })).resolves.toMatchObject({
+      testOutcome: {
+        state: 'failed',
+        basis: 'related-selection',
+        matchingFiles: 1,
+        matchingTests: 1,
+      },
+    });
+  });
+});
+
 test('bounds exact-path diagnostics to two hundred records', async () => {
   await withTempWorkspace('rstack-code-evidence-', async (workspaceRoot) => {
     const facet = lintFacet('src/noisy.ts');
@@ -572,6 +606,58 @@ test('adds an independent module axis only for an explicit artifact and exposes 
     await expect(
       readCodeEvidence(workspaceRoot, { path: 'src/live.ts', dataFile: 'rsdoctor-data.json' }),
     ).rejects.toThrow('contextId and dataFile must be supplied together.');
+  });
+});
+
+test('degrades the module axis for a listed test context instead of failing the whole call', async () => {
+  await withTempWorkspace('rstack-code-evidence-', async (workspaceRoot) => {
+    await cp(fixtureRoot, workspaceRoot, { recursive: true });
+    const source = 'export const live = true;\n';
+    const sourcePath = path.join(workspaceRoot, 'src', 'live.ts');
+    await mkdir(path.dirname(sourcePath), { recursive: true });
+    await writeFile(sourcePath, source);
+    const testContext = {
+      contextId: 'ctx_workspace_test',
+      packageRoot: '.',
+      product: 'development',
+      environment: 'test',
+    } as const;
+    await writeSnapshot(workspaceRoot, {
+      producer: 'rstest',
+      snapshotId: 'snap_workspace_test',
+      observedAt: '2026-08-13T01:00:00.000Z',
+      context: testContext,
+      facets: {
+        test: testFacet('src/live.ts', 'pass', 'unused') as unknown as JsonValue,
+        execution: executionFacet('src/live.ts', digest(source), 1) as unknown as JsonValue,
+      },
+      completeness: { test: 'complete', execution: 'complete' },
+    });
+    await writeSnapshot(workspaceRoot, {
+      producer: 'rslint',
+      snapshotId: 'snap_workspace_lint',
+      observedAt: '2026-08-13T02:00:00.000Z',
+      facets: { lint: lintFacet('src/live.ts') as unknown as JsonValue },
+      completeness: { lint: 'complete' },
+    });
+
+    // A test context is not an application or library product, so the module axis cannot report
+    // reachability. The unrelated coverage, outcome, and diagnostics axes must survive regardless.
+    const evidence = await readCodeEvidence(workspaceRoot, {
+      path: 'src/live.ts',
+      contextId: testContext.contextId,
+      dataFile: 'rsdoctor-data.json',
+    });
+
+    expect(evidence).toMatchObject({
+      executionCoverage: { state: 'observed' },
+      testOutcome: { state: 'passed', basis: 'exact-path' },
+      diagnostics: { total: 1, returned: 1, truncated: false },
+    });
+    expect(evidence.module?.provenance).toMatchObject({
+      contextId: testContext.contextId,
+      dataFile: 'rsdoctor-data.json',
+    });
   });
 });
 

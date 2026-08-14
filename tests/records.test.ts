@@ -458,6 +458,84 @@ test('rejects malformed snapshots', () => {
   }
 });
 
+const causeChain = (depth: number): Record<string, unknown> => ({
+  name: `Cause${depth}`,
+  message: `cause ${depth}`,
+  ...(depth === 0 ? {} : { cause: causeChain(depth - 1) }),
+});
+
+const facetWithTestCase = (testCase: Record<string, unknown>) => ({
+  producer: 'rstest',
+  files: [
+    {
+      project: 'unit',
+      path: 'src/index.test.ts',
+      status: 'fail',
+      tests: [testCase],
+    },
+  ],
+  stats: {
+    tests: { total: 1, passed: 0, failed: 1, skipped: 0, todo: 0 },
+    files: { total: 1, failed: 1 },
+  },
+  durationMs: 1,
+  unhandledErrors: [],
+});
+
+const baseTestCase = {
+  project: 'unit',
+  path: 'src/index.test.ts',
+  name: 'works',
+  status: 'fail',
+} as const;
+
+test('validates test cases carrying error causes and task metadata', () => {
+  const withFidelity = facetWithTestCase({
+    ...baseTestCase,
+    // Exactly the eight cause links the capture-side cap emits, so writer output always validates.
+    errors: [{ name: 'AssertionError', message: 'outer', cause: causeChain(7) }],
+    meta: { flaky: true, attempts: 2, tags: ['slow'], detail: { note: null } },
+  });
+  expect(validateTestFacet(withFidelity)).toEqual(withFidelity);
+
+  // Snapshots written before these fields existed keep validating: both are optional and the
+  // store is checkout-local, so the schema version does not move.
+  const withoutFidelity = facetWithTestCase({
+    ...baseTestCase,
+    errors: [{ name: 'AssertionError', message: 'outer' }],
+  });
+  expect(validateTestFacet(withoutFidelity)).toEqual(withoutFidelity);
+  expect(validateSnapshot({ ...snapshot, facets: { test: withoutFidelity } })).not.toBeUndefined();
+});
+
+test('rejects unbounded cause chains and metadata that is not JSON-safe', () => {
+  expect(
+    validateTestFacet(
+      facetWithTestCase({
+        ...baseTestCase,
+        errors: [{ name: 'AssertionError', message: 'outer', cause: causeChain(8) }],
+      }),
+    ),
+  ).toBeUndefined();
+  expect(
+    validateTestFacet(
+      facetWithTestCase({
+        ...baseTestCase,
+        errors: [{ name: 'AssertionError', message: 'outer', cause: { message: 'no name' } }],
+      }),
+    ),
+  ).toBeUndefined();
+  expect(
+    validateTestFacet(facetWithTestCase({ ...baseTestCase, meta: { report: () => undefined } })),
+  ).toBeUndefined();
+  expect(
+    validateTestFacet(facetWithTestCase({ ...baseTestCase, meta: ['not', 'a', 'record'] })),
+  ).toBeUndefined();
+  expect(
+    validateTestFacet(facetWithTestCase({ ...baseTestCase, meta: { size: Number.NaN } })),
+  ).toBeUndefined();
+});
+
 test('creates and recognizes canonical snapshot generation file names', () => {
   expect(getContextSnapshotGenerationFileName(snapshot)).toBe('0000000002-snap_library_2.json');
   expect(isContextSnapshotGenerationFileName('0000000002-snap_library_2.json', snapshot)).toBe(

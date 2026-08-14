@@ -5,7 +5,13 @@ import { z } from 'zod';
 import { readCodeEvidence, type CodeEvidenceResult } from './codeEvidence.ts';
 import { diffContextSnapshots } from './diff.ts';
 import { isRecordObject } from './guards.ts';
-import { captureLintSnapshot, getLintFixPreview, listDiagnostics } from './lint.ts';
+import {
+  captureLintSnapshot,
+  getLintFixPreview,
+  listDiagnostics,
+  type LintCaptureAdapter,
+  type RslintFactory,
+} from './lint.ts';
 import { decodeCursor, encodeCursor } from './pagination.ts';
 import {
   explainDeadCodeCandidate,
@@ -19,7 +25,12 @@ import { resolveRsdoctorReport } from './report.ts';
 import { assessSnapshotFreshness } from './source.ts';
 import { readProjectStatus } from './status.ts';
 import { readContextSnapshots } from './store.ts';
-import { captureTestSnapshot, listTestResults, type TestSnapshotRequest } from './testRun.ts';
+import {
+  captureTestSnapshot,
+  listTestResults,
+  type TestCaptureDependencies,
+  type TestSnapshotRequest,
+} from './testRun.ts';
 
 declare const RSTACK_CONTEXT_VERSION: string;
 
@@ -115,11 +126,15 @@ const paginationCursorInput = z
 const packageRootInput = z
   .string()
   .min(1)
-  .describe('Checkout-relative package directory; defaults to the checkout root.');
+  .describe(
+    'Checkout-relative package directory that must stay inside the checkout; defaults to the checkout root.',
+  );
 const configPathInput = z
   .string()
   .min(1)
-  .describe('Checkout-relative Rstack config path; defaults to ordinary discovery in packageRoot.');
+  .describe(
+    'Checkout-relative Rstack config path that must stay inside the checkout; defaults to ordinary discovery in packageRoot.',
+  );
 const rsdoctorToolNameInput = z
   .enum(listRsdoctorToolNames())
   .describe('Supported Rsdoctor catalog tool to run.');
@@ -398,6 +413,10 @@ const formatStructuredResult = (result: unknown): string => {
     addDetail('firstError', firstError.message);
   }
 
+  if (Array.isArray(result.unreadableInputs) && result.unreadableInputs.length > 0) {
+    addDetail('unreadableInputs', result.unreadableInputs.length);
+  }
+
   return details.length === 0
     ? 'Rstack result is available in structuredContent.'
     : `Rstack result: ${details.join(', ')}. See structuredContent for complete data.`;
@@ -496,6 +515,9 @@ type ContextMcpDependencies = {
   analyzeRsdoctorArtifact?: typeof analyzeRsdoctorArtifact;
   captureLintSnapshot?: typeof captureLintSnapshot;
   captureTestSnapshot?: typeof captureTestSnapshot;
+  createRslint?: RslintFactory;
+  lintCaptureAdapter?: LintCaptureAdapter;
+  testCaptureDependencies?: TestCaptureDependencies;
   serverVersion?: string;
 };
 
@@ -798,6 +820,8 @@ const createContextMcpServer = (
         const result = await (dependencies.captureLintSnapshot ?? captureLintSnapshot)(
           workspaceRoot,
           request,
+          dependencies.createRslint,
+          dependencies.lintCaptureAdapter,
         );
         return toStructuredMcpResult(result);
       } catch (error) {
@@ -824,6 +848,7 @@ const createContextMcpServer = (
         const result = await (dependencies.captureTestSnapshot ?? captureTestSnapshot)(
           workspaceRoot,
           input as TestSnapshotRequest,
+          dependencies.testCaptureDependencies,
         );
         return toStructuredMcpResult(result);
       } catch (error) {

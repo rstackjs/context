@@ -41,6 +41,78 @@ test('returns a stable anonymous status for an empty standalone store', async ()
   });
 });
 
+test('keeps the newest completed snapshot when a later run recorded none', async () => {
+  await withTempWorkspace('rstack-context-status-', async (workspaceRoot) => {
+    await mkdir(path.join(workspaceRoot, 'packages', 'app'), { recursive: true });
+    const appContext = {
+      contextId: 'ctx_app',
+      packageRoot: 'packages/app',
+      product: 'application',
+      environment: 'web',
+    } as const;
+    const goodRun = createRun('run_good', 'rsbuild', '2026-08-12T04:00:00.000Z', appContext);
+    const abortedRun = createRun('run_aborted', 'rsbuild', '2026-08-12T06:00:00.000Z', appContext);
+    const goodSnapshot = {
+      schemaVersion: contextStoreSchemaVersion,
+      snapshotId: 'snap_good',
+      runId: goodRun.runId,
+      contextId: appContext.contextId,
+      sequence: 1,
+      observedAt: '2026-08-12T04:00:01.000Z',
+      status: 'pass',
+      completeness: { build: 'complete' },
+      facets: { summary: { errors: 0 } },
+    } satisfies ContextSnapshot;
+
+    expect(await writeContextRunManifest(workspaceRoot, goodRun)).toMatchObject({ written: true });
+    expect(await writeContextSnapshot(workspaceRoot, goodSnapshot)).toMatchObject({
+      written: true,
+    });
+    // An aborted build writes its run manifest at onBeforeBuild and never publishes a snapshot.
+    expect(await writeContextRunManifest(workspaceRoot, abortedRun)).toMatchObject({
+      written: true,
+    });
+
+    const masked = await readProjectStatus(workspaceRoot);
+
+    expect(masked.contexts).toEqual([
+      {
+        runId: abortedRun.runId,
+        producer: abortedRun.producer,
+        context: appContext,
+        state: 'ready',
+        latestSnapshot: goodSnapshot,
+        freshness: { state: 'unknown', changedPaths: [] },
+      },
+    ]);
+
+    const laterRun = createRun('run_later', 'rsbuild', '2026-08-12T07:00:00.000Z', appContext);
+    const laterSnapshot = {
+      ...goodSnapshot,
+      snapshotId: 'snap_later',
+      runId: laterRun.runId,
+      observedAt: '2026-08-12T07:00:01.000Z',
+    } satisfies ContextSnapshot;
+    expect(await writeContextRunManifest(workspaceRoot, laterRun)).toMatchObject({ written: true });
+    expect(await writeContextSnapshot(workspaceRoot, laterSnapshot)).toMatchObject({
+      written: true,
+    });
+
+    const refreshed = await readProjectStatus(workspaceRoot);
+
+    expect(refreshed.contexts).toEqual([
+      {
+        runId: laterRun.runId,
+        producer: laterRun.producer,
+        context: appContext,
+        state: 'ready',
+        latestSnapshot: laterSnapshot,
+        freshness: { state: 'unknown', changedPaths: [] },
+      },
+    ]);
+  });
+});
+
 test('projects only the latest run for each context in deterministic order', async () => {
   await withTempWorkspace('rstack-context-status-', async (workspaceRoot) => {
     await mkdir(path.join(workspaceRoot, 'packages', 'app'), {
@@ -125,7 +197,9 @@ test('projects only the latest run for each context in deterministic order', asy
         runId: secondAppRun.runId,
         producer: secondAppRun.producer,
         context: appContext,
-        state: 'pending',
+        state: 'ready',
+        latestSnapshot: appSnapshot,
+        freshness: { state: 'unknown', changedPaths: [] },
       },
       {
         runId: secondLibraryRun.runId,

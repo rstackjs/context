@@ -27,3 +27,8 @@ pnpm test
 The package uses Rslib for builds, Rstest for tests, and Rslint for lint and type-aware checks.
 Rsbuild remains a public integration surface for build-context observers. See the
 [context engine RFC](./docs/rfc.md) for the runtime architecture and evidence semantics.
+
+Execution coverage evidence is optional and resolved against the package under test, not against
+`@rstackjs/context` itself: install `@rstest/coverage-istanbul` (or another supported Rstest
+coverage provider) as a dependency of the checkout being analyzed for coverage evidence to be
+captured. `@rstackjs/context` does not declare that provider as a peer dependency.

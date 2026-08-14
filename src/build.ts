@@ -5,6 +5,7 @@ import type {
   EnvironmentContext,
   OnAfterEnvironmentCompileFn,
   OnBeforeBuildFn,
+  Rspack,
   RsbuildConfig,
   RsbuildPlugin,
 } from '@rsbuild/core';
@@ -71,11 +72,7 @@ const buildMetadataFacet = ({
     chunks: true,
     errors: false,
     warnings: false,
-  }) as {
-    assets?: Array<{ name?: unknown; size?: unknown }>;
-    chunks?: Array<{ files?: unknown; id?: unknown; initial?: unknown }>;
-    hash?: unknown;
-  };
+  }) as Pick<Rspack.StatsCompilation, 'assets' | 'chunks' | 'hash'>;
   const assets: BuildMetadataFacet['assets'] = [];
   let droppedAssets = 0;
   for (const asset of json.assets ?? []) {
