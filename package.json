@@ -37,6 +37,10 @@
       "types": "./dist/rslint.d.ts",
       "default": "./dist/rslint.js"
     },
+    "./rstack": {
+      "types": "./dist/rstack.d.ts",
+      "default": "./dist/rstack.js"
+    },
     "./rstest": {
       "types": "./dist/rstest.d.ts",
       "default": "./dist/rstest.js"

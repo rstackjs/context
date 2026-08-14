@@ -90,3 +90,11 @@ export {
   type SnapshotDiffResult,
 } from './diff.ts';
 export { createContextMcpServer, type ContextMcpDependencies } from './mcp.ts';
+export {
+  createRstackContextPlugin,
+  type ContextBuildModifier,
+  type ContextRstackModifierContext,
+  type ContextRstackPlugin,
+  type ContextRstackPluginApi,
+  type ContextRstackPluginOptions,
+} from './rstack.ts';

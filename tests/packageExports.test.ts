@@ -26,6 +26,7 @@ test('publishes focused Context entry points without a Rstack dependency', async
     './rsdoctor',
     './rslib',
     './rslint',
+    './rstack',
     './rstest',
   ]);
   expect(packageJson.dependencies?.['@rsdoctor/agent-cli']).toBe('0.1.1');
@@ -39,7 +40,7 @@ test('publishes focused Context entry points without a Rstack dependency', async
 });
 
 test('loads each focused Context entry point independently', () => {
-  const entryPoints = ['rsbuild', 'rslib', 'rstest', 'rslint', 'rsdoctor', 'mcp'];
+  const entryPoints = ['rsbuild', 'rslib', 'rstest', 'rslint', 'rsdoctor', 'mcp', 'rstack'];
   const script = `await Promise.all(${JSON.stringify(entryPoints)}.map((name) => import('@rstackjs/context/' + name)));`;
   const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
     cwd: repositoryRoot,
