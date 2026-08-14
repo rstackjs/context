@@ -173,8 +173,16 @@ const codeEvidenceInput = z
   .object({
     path: z.string().min(1).describe('Checkout-relative source path to inspect.'),
     line: z.number().int().min(1).optional(),
-    contextId: contextIdInput.optional(),
-    dataFile: rsdoctorDataFileInput.optional(),
+    contextId: contextIdInput
+      .describe(
+        'Artifact context ID returned by project_status; use only together with dataFile, and omit both for test/lint-only evidence.',
+      )
+      .optional(),
+    dataFile: rsdoctorDataFileInput
+      .describe(
+        'Explicit checkout-relative Rsdoctor JSON artifact path; use only together with contextId.',
+      )
+      .optional(),
     module: moduleSelectorInput
       .describe(
         'Optional exact artifact module ID, path, or name to join with path-based test, coverage, and lint evidence.',

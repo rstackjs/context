@@ -55,6 +55,15 @@ test('publishes the complete standalone MCP catalog', async () => {
     });
     expect(tools.map(({ name }) => name)).toEqual(toolNames);
     expect(tools.every(({ inputSchema }) => inputSchema.type === 'object')).toBe(true);
+    const codeEvidenceSchema = tools.find(({ name }) => name === 'code_evidence')?.inputSchema as {
+      properties?: Record<string, { description?: string }>;
+    };
+    expect(codeEvidenceSchema.properties?.contextId?.description).toContain(
+      'only together with dataFile',
+    );
+    expect(codeEvidenceSchema.properties?.dataFile?.description).toContain(
+      'only together with contextId',
+    );
   });
 });
 
