@@ -262,7 +262,7 @@ test('joins newest exact-path execution, test outcome, and diagnostics without i
         lint: { snapshotId: 'snap_lint', completeness: { lint: 'complete' } },
       },
     });
-    expect(result.bounds).toContain('test-outcome-exact-path-only');
+    expect(result.bounds).toContain('test-outcome-exact-path-or-isolated-related-selection');
     expect(result.bounds).toContain('aggregate-execution-no-test-attribution');
 
     await expect(
@@ -322,7 +322,12 @@ test('reports captured related-test evidence independently from test execution',
       }),
     ).resolves.toMatchObject({
       testRelation: { state: 'related', testFiles: ['tests/value.test.ts'] },
-      testOutcome: { state: 'unknown', reason: 'no-exact-test-record' },
+      testOutcome: {
+        state: 'passed',
+        basis: 'related-selection',
+        matchingFiles: 1,
+        matchingTests: 1,
+      },
     });
     await expect(
       readCodeEvidence(workspaceRoot, {

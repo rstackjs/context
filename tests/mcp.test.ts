@@ -5,7 +5,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { expect, test } from '@rstest/core';
 import pkgJson from '../package.json' with { type: 'json' };
-import { createContextMcpServer } from '../src/mcp.ts';
+import { createContextMcpServer, type ContextMcpDependencies } from '../src/mcp.ts';
 import { writeContextRunManifest, writeContextSnapshot } from '../src/store.ts';
 
 const toolNames = [
@@ -28,9 +28,13 @@ const toolNames = [
 
 const withClient = async (
   callback: (client: Client, workspaceRoot: string) => Promise<void>,
+  dependencies: ContextMcpDependencies = {},
 ): Promise<void> => {
   const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'rstack-context-mcp-'));
-  const server = createContextMcpServer(workspaceRoot, { serverVersion: pkgJson.version });
+  const server = createContextMcpServer(workspaceRoot, {
+    ...dependencies,
+    serverVersion: pkgJson.version,
+  });
   const client = new Client({ name: 'context-test-client', version: '1.0.0' });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
 
@@ -79,6 +83,55 @@ test('reports an empty checkout without requiring optional producers', async () 
       issues: [],
     });
   });
+});
+
+test('surfaces requested execution availability in test capture text', async () => {
+  await withClient(
+    async (client) => {
+      const result = await client.callTool({
+        name: 'test_snapshot',
+        arguments: { packageRoot: '.', execution: {} },
+      });
+
+      expect(result.content).toEqual([
+        {
+          type: 'text',
+          text: expect.stringContaining('executionAvailability=unavailable'),
+        },
+      ]);
+      expect(result.structuredContent).toMatchObject({
+        status: 'pass',
+        execution: {
+          provider: 'istanbul',
+          availability: 'unavailable',
+          completeness: 'unknown',
+        },
+      });
+    },
+    {
+      captureTestSnapshot: () =>
+        Promise.resolve({
+          runId: 'run_test',
+          contextId: 'ctx_test',
+          snapshotId: 'snap_test',
+          status: 'pass',
+          freshness: { state: 'fresh', changedPaths: [] },
+          summary: {
+            files: 1,
+            failedFiles: 0,
+            tests: 1,
+            failedTests: 0,
+            errors: 0,
+            unhandledErrors: 0,
+          },
+          execution: {
+            provider: 'istanbul',
+            availability: 'unavailable',
+            completeness: 'unknown',
+          },
+        }),
+    },
+  );
 });
 
 test('keeps project status compact while preserving build selection evidence', async () => {

@@ -322,6 +322,8 @@ aggregate statement, function, and branch-arm locations with exact source digest
 attribute coverage to individual tests. The source-input set remains partial because the adapter
 does not record a complete dependency graph. When the selected package does not install the optional
 Istanbul provider, the requested tests still run and the execution facet is recorded as unavailable.
+The capture result surfaces the provider, availability, and execution-universe completeness so an
+agent sees that limitation without making a second query.
 
 The branch does not attach to an existing watch process, control watch cycles, or keep a resident
 Rstest session.
@@ -343,7 +345,7 @@ flowchart LR
   Lint["Selected Rslint snapshot"] --> Join
   Artifact["Optional exact-bound<br/>Rsdoctor artifact"] --> Join
   Join --> Coverage["Aggregate execution<br/>observed / not-observed / unknown"]
-  Join --> Outcome["Exact-path test outcome"]
+  Join --> Outcome["Exact-path or isolated<br/>related-selection outcome"]
   Join --> Diagnostics["Exact-path diagnostics"]
   Join --> Module["Independent module state axes"]
 ```
@@ -351,9 +353,12 @@ flowchart LR
 Positive execution requires a positive stored hit and an exact current source digest. A zero-hit
 result becomes `not-observed` only when the instrumented universe is complete and untruncated and
 relevant locations exist. Missing, stale, partial, or truncated evidence stays unknown or
-unavailable. Test outcomes do not imply a source-to-test relation, and module reachability,
-shipment, public contract, and optimizer retention remain separate from runtime evidence.
-No exact test record is unknown rather than not-run; not-run requires matching skipped or todo
+unavailable. An exact test-file record reports its own outcome. When a capture selected exactly one
+source through `related`, the outcome may instead summarize only the test files returned for that
+isolated selection; its `related-selection` basis distinguishes that run result from source
+execution. Grouped or missing selection remains unknown. Module reachability, shipment, public
+contract, optimizer retention, and runtime coverage remain separate. No exact or isolated
+related-selection record is unknown rather than not-run; not-run requires matching skipped or todo
 records. Exact-path diagnostics are deterministically bounded to 200 items and report their total
 and truncation. Module selection tries the workspace path before a package-relative fallback so
 identical paths in sibling packages remain distinguishable. An explicit `module` selector bypasses
@@ -619,9 +624,10 @@ The lean delivery sequence is:
 4. Join axes only when workspace, package, context, and exact input or graph digests match; otherwise
    report the evidence separately with its freshness.
 
-The implemented `code_evidence` query covers only aggregate execution, exact-path outcomes and
-diagnostics, and an optional explicit artifact module. It does not claim per-test attribution or a
-source-to-test relationship.
+The implemented `code_evidence` query covers aggregate execution, exact-path or isolated
+related-selection outcomes, static related-test selection, diagnostics, and an optional explicit
+artifact module. It does not claim per-test coverage attribution or that a passing related test
+executed the selected source.
 
 ## Deferred extensions
 

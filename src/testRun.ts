@@ -10,6 +10,7 @@ import {
   type JsonValue,
   type TestCaseRecord,
   type TestErrorRecord,
+  type TestExecutionFacet,
   type TestFacet,
   type TestFileRecord,
 } from './model.ts';
@@ -72,6 +73,11 @@ type TestCaptureResult = {
   status: ContextRunStatus;
   freshness: ContextFreshness;
   summary: Record<string, number>;
+  execution?: {
+    provider: TestExecutionFacet['provider'];
+    availability: TestExecutionFacet['availability'];
+    completeness: TestExecutionFacet['universe']['completeness'];
+  };
   errors?: TestCaptureError[];
   unhandledErrors?: TestErrorRecord[];
 };
@@ -473,6 +479,15 @@ const captureTestSnapshot = async (
       errors: errors.length,
       unhandledErrors: facet.unhandledErrors.length,
     },
+    ...(executionFacet === undefined
+      ? {}
+      : {
+          execution: {
+            provider: executionFacet.provider,
+            availability: executionFacet.availability,
+            completeness: executionFacet.universe.completeness,
+          },
+        }),
     ...(errors.length === 0 ? {} : { errors }),
     ...(facet.unhandledErrors.length === 0 ? {} : { unhandledErrors: facet.unhandledErrors }),
   };

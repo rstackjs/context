@@ -377,6 +377,12 @@ const formatStructuredResult = (result: unknown): string => {
     }
   }
 
+  if (isRecord(result.execution)) {
+    addDetail('executionProvider', result.execution.provider);
+    addDetail('executionAvailability', result.execution.availability);
+    addDetail('executionCompleteness', result.execution.completeness);
+  }
+
   const firstError =
     Array.isArray(result.errors) && isRecord(result.errors[0])
       ? result.errors[0]

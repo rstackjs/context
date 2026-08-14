@@ -657,7 +657,15 @@ test('runs tests without coverage when the optional Istanbul provider is unavail
         files: ['src/math.test.ts'],
       },
     ]);
-    expect(capture).toMatchObject({ status: 'pass', summary: { files: 1, tests: 1 } });
+    expect(capture).toMatchObject({
+      status: 'pass',
+      summary: { files: 1, tests: 1 },
+      execution: {
+        provider: 'istanbul',
+        availability: 'unavailable',
+        completeness: 'unknown',
+      },
+    });
     await expect(readContextSnapshotById(workspaceRoot, capture.snapshotId)).resolves.toMatchObject(
       {
         snapshot: {

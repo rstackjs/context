@@ -54,7 +54,8 @@ type ExecutionCoverageEvidence = {
 
 type TestOutcomeEvidence = {
   state: 'failed' | 'passed' | 'not-run' | 'unknown';
-  reason?: 'no-exact-test-record';
+  basis?: 'exact-path' | 'related-selection';
+  reason?: 'no-exact-test-record' | 'related-tests-not-reported';
   matchingFiles: number;
   matchingTests: number;
 };
@@ -225,27 +226,66 @@ const testOutcome = (
   const tests = facet.files
     .flatMap((file) => file.tests)
     .filter((test) => test.path === sourcePath);
+  let basis: TestOutcomeEvidence['basis'] = 'exact-path';
+  let matchingFiles = files;
+  let matchingTests = tests;
   if (files.length === 0 && tests.length === 0) {
+    const relation = facet.relation;
+    if (
+      relation === undefined ||
+      relation.sources.length !== 1 ||
+      relation.sources[0] !== sourcePath
+    ) {
+      return {
+        state: 'unknown',
+        reason: 'no-exact-test-record',
+        matchingFiles: 0,
+        matchingTests: 0,
+      };
+    }
+    const selectedPaths = new Set(relation.testFiles);
+    matchingFiles = facet.files.filter((file) => selectedPaths.has(file.path));
+    matchingTests = matchingFiles.flatMap((file) => file.tests);
+    basis = 'related-selection';
+    if (relation.testFiles.length > 0 && matchingFiles.length === 0) {
+      return {
+        state: 'unknown',
+        basis,
+        reason: 'related-tests-not-reported',
+        matchingFiles: 0,
+        matchingTests: 0,
+      };
+    }
+  }
+  if (
+    facet.unhandledErrors.length > 0 ||
+    matchingFiles.some((file) => file.status === 'fail' || (file.errors?.length ?? 0) > 0) ||
+    matchingTests.some((test) => test.status === 'fail')
+  ) {
     return {
-      state: 'unknown',
-      reason: 'no-exact-test-record',
-      matchingFiles: 0,
-      matchingTests: 0,
+      state: 'failed',
+      basis,
+      matchingFiles: matchingFiles.length,
+      matchingTests: matchingTests.length,
     };
   }
   if (
-    files.some((file) => file.status === 'fail') ||
-    tests.some((test) => test.status === 'fail')
+    matchingFiles.some((file) => file.status === 'pass') ||
+    matchingTests.some((test) => test.status === 'pass')
   ) {
-    return { state: 'failed', matchingFiles: files.length, matchingTests: tests.length };
+    return {
+      state: 'passed',
+      basis,
+      matchingFiles: matchingFiles.length,
+      matchingTests: matchingTests.length,
+    };
   }
-  if (
-    files.some((file) => file.status === 'pass') ||
-    tests.some((test) => test.status === 'pass')
-  ) {
-    return { state: 'passed', matchingFiles: files.length, matchingTests: tests.length };
-  }
-  return { state: 'not-run', matchingFiles: files.length, matchingTests: tests.length };
+  return {
+    state: 'not-run',
+    basis,
+    matchingFiles: matchingFiles.length,
+    matchingTests: matchingTests.length,
+  };
 };
 
 const testRelation = (
@@ -400,7 +440,7 @@ const readCodeEvidence = async (
   const bounds = [
     'aggregate-execution-no-test-attribution',
     'test-relation-static-build-graph',
-    'test-outcome-exact-path-only',
+    'test-outcome-exact-path-or-isolated-related-selection',
     'diagnostics-exact-path-only',
     ...(module !== undefined && module.provenance.artifactBinding !== 'exact'
       ? ['artifact-binding-not-exact']
