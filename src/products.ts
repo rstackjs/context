@@ -92,7 +92,19 @@ const resolveProductRoots = async (
 
   const roots: ProductRoot[] = [];
   const bounds: string[] = [];
-  const entries = graph.modules.filter(({ isEntry }) => isEntry);
+  const reportedEntries = graph.modules.filter(({ isEntry }) => isEntry);
+  const entryPathById = new Map(
+    reportedEntries.map(({ id, path: modulePath }) => [id, normalizeModuleSelector(modulePath)]),
+  );
+  const nestedEntryIds = new Set(
+    graph.edges
+      .filter(({ from, to }) => {
+        const fromPath = entryPathById.get(from);
+        return fromPath !== undefined && fromPath === entryPathById.get(to);
+      })
+      .map(({ to }) => to),
+  );
+  const entries = reportedEntries.filter(({ id }) => !nestedEntryIds.has(id));
   for (const module of entries) {
     addRoot(roots, {
       kind: 'production-entry',

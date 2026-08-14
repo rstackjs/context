@@ -39,6 +39,41 @@ test('derives application entry and conservative optimizer roots', async () => {
   ]);
 });
 
+test('filters only same-path entry copies nested under another entry', async () => {
+  const product = await resolveProductRoots(fixtureRoot, context('ctx_app', 'application'), {
+    modules: [
+      {
+        id: 'nested-copy',
+        path: 'src/index.ts',
+        name: 'src/index.ts',
+        chunks: ['index'],
+        isEntry: true,
+      },
+      {
+        id: 'container',
+        path: 'src/index.ts',
+        name: 'src/index.ts|81e5e5370155b3bc',
+        chunks: ['index'],
+        isEntry: true,
+      },
+      {
+        id: 'chunkless-only',
+        path: 'src/standalone.ts',
+        name: 'src/standalone.ts',
+        chunks: [],
+        isEntry: true,
+      },
+    ],
+    edges: [{ from: 'container', to: 'nested-copy' }],
+    exportRowsPresent: false,
+    issues: [],
+  });
+
+  expect(
+    product.roots.filter(({ kind }) => kind === 'production-entry').map(({ module }) => module.id),
+  ).toEqual(['container', 'chunkless-only']);
+});
+
 test('collects library contracts and seeds only exact runtime module matches', async () => {
   const workspaceRoot = path.join(fixtureRoot, 'library');
   const graph = await readRsdoctorModuleGraph(workspaceRoot, 'rsdoctor-data.json');
