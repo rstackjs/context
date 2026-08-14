@@ -66,6 +66,7 @@ type RsdoctorAnalysisResult = {
   dataFile: string;
   result: JsonValue;
   sectionEvidence: RsdoctorSectionEvidence[];
+  artifactMetadata?: RsdoctorArtifactMetadata;
 };
 
 type RsdoctorArtifactCompilationIdentity = {
@@ -430,6 +431,7 @@ const analyzeRsdoctorArtifact = async (
   const metadata = artifact.metadata;
   return {
     dataFile: request.dataFile,
+    ...(metadata === undefined ? {} : { artifactMetadata: metadata }),
     result: result as JsonValue,
     sectionEvidence:
       metadata === undefined

@@ -159,7 +159,7 @@ test('keeps project status compact while preserving build selection evidence', a
                 command: 'build',
                 mode: 'production',
                 environment: 'web',
-                durationMs: 500,
+                environmentCompileDurationMs: 500,
                 hash: 'build-hash',
                 hasErrors: false,
                 hasWarnings: true,

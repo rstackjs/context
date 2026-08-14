@@ -42,7 +42,7 @@ const summarizeBuildFacet = (value: unknown) => {
     command: value.command,
     ...(typeof value.mode === 'string' ? { mode: value.mode } : {}),
     environment: value.environment,
-    durationMs: value.durationMs,
+    environmentCompileDurationMs: value.durationMs,
     ...(typeof value.hash === 'string' ? { hash: value.hash } : {}),
     hasErrors: value.hasErrors,
     hasWarnings: value.hasWarnings,
@@ -367,6 +367,10 @@ const formatStructuredResult = (result: unknown): string => {
     ]) {
       addDetail(key, result.summary[key]);
     }
+  }
+
+  if (Array.isArray(result.unhandledErrors) && isRecord(result.unhandledErrors[0])) {
+    addDetail('firstError', result.unhandledErrors[0].message);
   }
 
   return details.length === 0

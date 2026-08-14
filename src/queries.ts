@@ -360,6 +360,14 @@ const isCandidate = (
   !traversals.conservative.predecessor.has(moduleId);
 
 const resolveModule = (graph: ObservedModuleGraph, selector: string): ObservedModule => {
+  const ambiguous = (matches: ObservedModule[]): never => {
+    const returned = matches.slice(0, 10);
+    const details = returned.map(({ id, path: modulePath }) => `${id} (${modulePath})`).join(', ');
+    const remainder = matches.length - returned.length;
+    throw new Error(
+      `Ambiguous module selector: ${selector}. Matches: ${details}${remainder === 0 ? '' : `, and ${remainder} more`}.`,
+    );
+  };
   const byId = graph.modules.find(({ id }) => id === selector);
   if (byId !== undefined) return byId;
 
@@ -370,14 +378,14 @@ const resolveModule = (graph: ObservedModuleGraph, selector: string): ObservedMo
       normalizeSelector(module.name) === normalized,
   );
   if (exact.length === 1) return exact[0];
-  if (exact.length > 1) throw new Error(`Ambiguous module selector: ${selector}`);
+  if (exact.length > 1) return ambiguous(exact);
 
   const suffix = graph.modules.filter(({ path: modulePath }) => {
     const normalizedPath = normalizeSelector(modulePath);
     return normalizedPath === normalized || normalizedPath.endsWith(`/${normalized}`);
   });
   if (suffix.length === 1) return suffix[0];
-  if (suffix.length > 1) throw new Error(`Ambiguous module selector: ${selector}`);
+  if (suffix.length > 1) return ambiguous(suffix);
   throw new Error(`Unknown module selector: ${selector}`);
 };
 

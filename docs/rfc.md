@@ -320,7 +320,8 @@ name pattern. The resulting snapshot records normalized test files, cases, error
 run status. An explicit `execution` request also enables Istanbul for that one run and stores bounded
 aggregate statement, function, and branch-arm locations with exact source digests. It does not
 attribute coverage to individual tests. The source-input set remains partial because the adapter
-does not record a complete dependency graph.
+does not record a complete dependency graph. When the selected package does not install the optional
+Istanbul provider, the requested tests still run and the execution facet is recorded as unavailable.
 
 The branch does not attach to an existing watch process, control watch cycles, or keep a resident
 Rstest session.

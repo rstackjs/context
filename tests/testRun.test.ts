@@ -43,6 +43,7 @@ const createDependencies = (
   calls: unknown[],
   suffix: string,
 ): TestCaptureDependencies => ({
+  hasCoverageProvider: () => true,
   runRstest: (options) => {
     calls.push(options);
     return Promise.resolve(result);
@@ -79,7 +80,7 @@ test('does not run Rstest when the host reports that tests are not configured', 
     } satisfies TestCaptureDependencies;
 
     await expect(captureTestSnapshot(workspaceRoot, {}, dependencies)).rejects.toThrow(
-      'Rstest is not configured for package root ".".',
+      'Rstest is not configured for package root ".". packageRoot is checkout-relative; call project_status and use context.packageRoot.',
     );
     expect(calls).toEqual([]);
     await expect(readProjectStatus(workspaceRoot)).resolves.toMatchObject({ contexts: [] });
@@ -617,6 +618,63 @@ test('records requested execution as unavailable when Rstest returns no coverage
   });
 });
 
+test('runs tests without coverage when the optional Istanbul provider is unavailable', async () => {
+  await withTempWorkspace(async (workspaceRoot) => {
+    const testPath = path.join(workspaceRoot, 'src', 'math.test.ts');
+    await mkdir(path.dirname(testPath), { recursive: true });
+    await writeFile(testPath, 'test');
+    const calls: unknown[] = [];
+    const result = createResult({
+      files: [
+        {
+          project: 'default',
+          testPath,
+          name: 'math.test.ts',
+          status: 'pass',
+          results: [],
+        },
+      ],
+      stats: {
+        tests: { total: 1, passed: 1, failed: 0, skipped: 0, todo: 0 },
+        files: { total: 1, failed: 0 },
+      },
+    });
+
+    const capture = await captureTestSnapshot(
+      workspaceRoot,
+      { files: ['src/math.test.ts'], execution: { include: ['src/math.ts'] } },
+      {
+        ...createDependencies(result, calls, 'provider-unavailable'),
+        hasCoverageProvider: () => false,
+      } satisfies TestCaptureDependencies,
+    );
+
+    expect(calls).toEqual([
+      {
+        cwd: workspaceRoot,
+        config: expect.stringMatching(/rstestConfig\.js$/u),
+        files: ['src/math.test.ts'],
+      },
+    ]);
+    expect(capture).toMatchObject({ status: 'pass', summary: { files: 1, tests: 1 } });
+    await expect(readContextSnapshotById(workspaceRoot, capture.snapshotId)).resolves.toMatchObject(
+      {
+        snapshot: {
+          status: 'pass',
+          completeness: { test: 'complete', execution: 'partial' },
+          facets: {
+            execution: {
+              provider: 'istanbul',
+              availability: 'unavailable',
+              requestedSelection: { include: ['src/math.ts'], allowExternal: false },
+            },
+          },
+        },
+      },
+    );
+  });
+});
+
 test('persists partial execution evidence when a covered source path is unreadable', async () => {
   await withTempWorkspace(async (workspaceRoot) => {
     const testPath = path.join(workspaceRoot, 'src', 'present.test.ts');
@@ -1010,6 +1068,13 @@ test('records unhandled Rstest errors as an error snapshot', async () => {
       status: 'error',
       freshness: { state: 'partial', changedPaths: [] },
       summary: { unhandledErrors: 1 },
+      unhandledErrors: [
+        {
+          name: 'ConfigError',
+          message: 'configuration failed',
+          stack: 'config stack',
+        },
+      ],
     });
     expect(
       (await readContextSnapshotById(workspaceRoot, capture.snapshotId))?.snapshot.facets,

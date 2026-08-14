@@ -771,6 +771,8 @@ test('rejects unknown contexts, ambiguous selectors, and invalid query bounds', 
         dataFile: 'rsdoctor-data.json',
         module: 'shared',
       }),
-    ).rejects.toThrow('Ambiguous module selector: shared');
+    ).rejects.toThrow(
+      'Ambiguous module selector: shared. Matches: 2 (src/a/shared.ts), 3 (src/b/shared.ts).',
+    );
   });
 });

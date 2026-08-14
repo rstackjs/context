@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import type { RunRstestOptions, TestRunResult } from '@rstest/core/api';
 import {
@@ -71,6 +72,7 @@ type TestCaptureResult = {
   status: ContextRunStatus;
   freshness: ContextFreshness;
   summary: Record<string, number>;
+  unhandledErrors?: TestErrorRecord[];
 };
 
 type RunRstest = (options?: RunRstestOptions) => Promise<TestRunResult>;
@@ -95,6 +97,7 @@ type TestCaptureDependencies = {
     packageRoot: string;
     configPath?: string;
   }) => boolean | Promise<boolean>;
+  hasCoverageProvider?: (packageRoot: string) => boolean | Promise<boolean>;
 };
 
 const toWorkspacePath = (workspaceRoot: string, filePath: string): string =>
@@ -195,6 +198,15 @@ const ensureWritten = (result: Awaited<ReturnType<typeof writeContextSnapshot>>)
 
 const loadRunRstest = async (): Promise<RunRstest> => (await import('@rstest/core/api')).runRstest;
 
+const hasCoverageProvider = (packageRoot: string): boolean => {
+  try {
+    createRequire(path.join(packageRoot, 'package.json')).resolve('@rstest/coverage-istanbul');
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const validateRelatedSelection = (request: TestSnapshotRequest): void => {
   if (request.files !== undefined && request.related !== undefined) {
     throw new Error('files and related cannot be used together.');
@@ -236,11 +248,33 @@ const captureTestSnapshot = async (
     }))
   ) {
     const packageRoot = toWorkspacePath(workspaceRoot, target.packageRoot) || '.';
-    throw new Error(`Rstest is not configured for package root "${packageRoot}".`);
+    throw new Error(
+      `Rstest is not configured for package root "${packageRoot}". packageRoot is checkout-relative; call project_status and use context.packageRoot.`,
+    );
   }
   const wrapperConfigPath =
     dependencies.wrapperConfigPath ??
     resolveInternalConfigPath(import.meta.dirname, 'rstestConfig.js');
+  const execution = request.execution;
+  const captureExecution =
+    execution !== undefined &&
+    (await (dependencies.hasCoverageProvider ?? hasCoverageProvider)(target.packageRoot));
+  const executionOptions =
+    execution === undefined || !captureExecution
+      ? {}
+      : {
+          inlineConfig: {
+            coverage: {
+              enabled: true,
+              provider: 'istanbul' as const,
+              reporters: [],
+              reportOnFailure: true,
+              ...(execution.include === undefined ? {} : { include: execution.include }),
+              ...(execution.exclude === undefined ? {} : { exclude: execution.exclude }),
+              allowExternal: execution.allowExternal ?? false,
+            },
+          },
+        };
   const context = createExplicitContextDescriptor({
     producer: 'rstest',
     workspaceRoot,
@@ -298,25 +332,7 @@ const captureTestSnapshot = async (
         runRstest({
           cwd: target.packageRoot,
           config: wrapperConfigPath,
-          ...(request.execution === undefined
-            ? {}
-            : {
-                inlineConfig: {
-                  coverage: {
-                    enabled: true,
-                    provider: 'istanbul' as const,
-                    reporters: [],
-                    reportOnFailure: true,
-                    ...(request.execution.include === undefined
-                      ? {}
-                      : { include: request.execution.include }),
-                    ...(request.execution.exclude === undefined
-                      ? {}
-                      : { exclude: request.execution.exclude }),
-                    allowExternal: request.execution.allowExternal ?? false,
-                  },
-                },
-              }),
+          ...executionOptions,
           ...(selectedFiles === undefined ? {} : { files: selectedFiles }),
           ...(request.testNamePattern === undefined
             ? {}
@@ -371,14 +387,16 @@ const captureTestSnapshot = async (
   }
   const facet = normalizeTestFacet(workspaceRoot, result, relation);
   const executionFacet =
-    request.execution === undefined
+    execution === undefined
       ? undefined
-      : await normalizeExecutionFacet(
-          workspaceRoot,
-          target.packageRoot,
-          request.execution,
-          result.coverage,
-        );
+      : !captureExecution
+        ? unavailableExecutionFacet(execution)
+        : await normalizeExecutionFacet(
+            workspaceRoot,
+            target.packageRoot,
+            execution,
+            result.coverage,
+          );
   const testInputs = await recordContextInputFiles(workspaceRoot, [
     ...new Set([
       ...facet.files.map((file) => file.path),
@@ -436,6 +454,7 @@ const captureTestSnapshot = async (
       failedTests: facet.stats.tests.failed,
       unhandledErrors: facet.unhandledErrors.length,
     },
+    ...(facet.unhandledErrors.length === 0 ? {} : { unhandledErrors: facet.unhandledErrors }),
   };
 };
 

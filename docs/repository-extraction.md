@@ -175,7 +175,8 @@ The extraction preserves the existing independent evidence lanes:
 - an Rsbuild-only project can expose build and Rsdoctor evidence without Rstest or Rslint;
 - an Rslib-only project can expose library build contexts without an application build;
 - Rslint and Rstest captures run only when their explicit tools are called and dependencies exist;
-- missing coverage leaves execution evidence unavailable rather than zero;
+- missing coverage or its optional provider leaves execution evidence unavailable rather than zero,
+  while the selected tests still run;
 - missing Rsdoctor data leaves artifact queries unavailable without affecting stored snapshots;
 - missing producers never prevent `project_status` from reporting available contexts.
 

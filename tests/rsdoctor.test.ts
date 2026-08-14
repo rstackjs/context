@@ -293,6 +293,7 @@ test('distinguishes collected empty data from an omitted artifact section', asyn
     });
 
     expect(collected.result).toMatchObject({ ok: true });
+    expect(collected.artifactMetadata).toEqual(createArtifactMetadata());
     expect(omitted.result).toEqual({
       ok: false,
       error: {
