@@ -63,7 +63,7 @@ test('publishes the opt-in Istanbul provider as an exact optional peer', async (
   };
 
   expect(packageJson.dependencies?.['@rstest/coverage-istanbul']).toBeUndefined();
-  expect(packageJson.devDependencies?.['@rstest/coverage-istanbul']).toBe('catalog:');
+  expect(packageJson.devDependencies?.['@rstest/coverage-istanbul']).toBe('0.11.6');
   expect(packageJson.peerDependencies?.['@rstest/coverage-istanbul']).toBe('0.11.6');
   expect(packageJson.peerDependenciesMeta?.['@rstest/coverage-istanbul']).toEqual({
     optional: true,
