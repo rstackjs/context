@@ -1,6 +1,5 @@
 /* rslint-disable @typescript-eslint/no-unsafe-assignment -- Rstest asymmetric matchers are intentionally untyped. */
-import { mkdir, mkdtemp, readFile, rm, unlink, writeFile } from 'node:fs/promises';
-import os from 'node:os';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { TestRunResult } from '@rstest/core/api';
 import { expect, test } from '@rstest/core';
@@ -13,18 +12,7 @@ import {
   type TestCaptureDependencies,
   type TestSnapshotRequest,
 } from '../src/testRun.ts';
-
-const withTempWorkspace = async (
-  callback: (workspaceRoot: string) => Promise<void>,
-): Promise<void> => {
-  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'rstack-context-test-run-'));
-
-  try {
-    await callback(workspaceRoot);
-  } finally {
-    await rm(workspaceRoot, { force: true, recursive: true });
-  }
-};
+import { withTempWorkspace } from './helpers.ts';
 
 const createResult = (overrides: Partial<TestRunResult> = {}): TestRunResult => ({
   ok: true,
@@ -72,7 +60,7 @@ test('publishes the opt-in Istanbul provider as an exact optional peer', async (
 });
 
 test('does not run Rstest when the host reports that tests are not configured', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-test-run-', async (workspaceRoot) => {
     const calls: unknown[] = [];
     const dependencies = {
       ...createDependencies(createResult(), calls, 'not_configured'),
@@ -88,7 +76,7 @@ test('does not run Rstest when the host reports that tests are not configured', 
 });
 
 test('captures one passing run with partial source freshness', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-test-run-', async (workspaceRoot) => {
     const testPath = path.join(workspaceRoot, 'src', 'math.test.ts');
     await mkdir(path.dirname(testPath), { recursive: true });
     await writeFile(testPath, 'test');
@@ -217,7 +205,7 @@ test('captures one passing run with partial source freshness', async () => {
 });
 
 test('resolves related source files before running and records the static test relation', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-test-run-', async (workspaceRoot) => {
     const sourcePath = path.join(workspaceRoot, 'packages', 'app', 'src', 'config.ts');
     const testPath = path.join(workspaceRoot, 'packages', 'app', 'tests', 'config.test.ts');
     await mkdir(path.dirname(sourcePath), { recursive: true });
@@ -293,7 +281,7 @@ test('resolves related source files before running and records the static test r
 });
 
 test('rejects files and related source selection together', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-test-run-', async (workspaceRoot) => {
     const calls: unknown[] = [];
     const dependencies = createDependencies(createResult(), calls, 'invalid-related');
     await expect(
@@ -308,7 +296,7 @@ test('rejects files and related source selection together', async () => {
 });
 
 test('records an empty related selection without falling back to the full test suite', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-test-run-', async (workspaceRoot) => {
     const sourcePath = path.join(workspaceRoot, 'src', 'unused.ts');
     await mkdir(path.dirname(sourcePath), { recursive: true });
     await writeFile(sourcePath, 'export const unused = true;\n');
@@ -334,7 +322,7 @@ test('records an empty related selection without falling back to the full test s
 });
 
 test('captures requested aggregate Istanbul execution evidence', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-test-run-', async (workspaceRoot) => {
     const testPath = path.join(workspaceRoot, 'src', 'math.test.ts');
     const sourcePath = path.join(workspaceRoot, 'src', 'math.ts');
     const classPath = path.join(workspaceRoot, 'src', 'counter.ts');
@@ -562,7 +550,7 @@ test('captures requested aggregate Istanbul execution evidence', async () => {
 });
 
 test('records requested execution as unavailable when Rstest returns no coverage map', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-test-run-', async (workspaceRoot) => {
     const calls: unknown[] = [];
     const capture = await captureTestSnapshot(
       workspaceRoot,
@@ -620,7 +608,7 @@ test('records requested execution as unavailable when Rstest returns no coverage
 });
 
 test('runs tests without coverage when the optional Istanbul provider is unavailable', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-test-run-', async (workspaceRoot) => {
     const testPath = path.join(workspaceRoot, 'src', 'math.test.ts');
     await mkdir(path.dirname(testPath), { recursive: true });
     await writeFile(testPath, 'test');
@@ -685,7 +673,7 @@ test('runs tests without coverage when the optional Istanbul provider is unavail
 });
 
 test('persists partial execution evidence when a covered source path is unreadable', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-test-run-', async (workspaceRoot) => {
     const testPath = path.join(workspaceRoot, 'src', 'present.test.ts');
     const missingPath = path.join(workspaceRoot, 'src', 'missing.ts');
     await mkdir(path.dirname(testPath), { recursive: true });
@@ -752,7 +740,7 @@ test('persists partial execution evidence when a covered source path is unreadab
 });
 
 test('bounds requested execution selectors before invoking Rstest', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-test-run-', async (workspaceRoot) => {
     let called = false;
     const dependencies: TestCaptureDependencies = {
       runRstest: () => {
@@ -777,7 +765,7 @@ test('bounds requested execution selectors before invoking Rstest', async () => 
 });
 
 test('rejects malformed execution selectors before invoking Rstest', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-test-run-', async (workspaceRoot) => {
     let called = false;
     const dependencies: TestCaptureDependencies = {
       runRstest: () => {
@@ -812,7 +800,7 @@ test('rejects malformed execution selectors before invoking Rstest', async () =>
 });
 
 test('truncates aggregate execution files deterministically', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-test-run-', async (workspaceRoot) => {
     const coverage: Record<string, unknown> = {};
     const sourceDirectory = path.join(workspaceRoot, 'src');
     await mkdir(sourceDirectory, { recursive: true });
@@ -887,7 +875,7 @@ test('truncates aggregate execution files deterministically', async () => {
 }, 15_000);
 
 test('normalizes failures, retries, skipped and todo cases', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-test-run-', async (workspaceRoot) => {
     const testPath = path.join(workspaceRoot, 'tests', 'mixed.test.ts');
     await mkdir(path.dirname(testPath), { recursive: true });
     await writeFile(testPath, 'test');
@@ -972,7 +960,7 @@ test('normalizes failures, retries, skipped and todo cases', async () => {
 });
 
 test('captures file-level failures without inventing test cases', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-test-run-', async (workspaceRoot) => {
     const testPath = path.join(workspaceRoot, 'tests', 'broken.test.ts');
     await mkdir(path.dirname(testPath), { recursive: true });
     await writeFile(testPath, 'invalid');
@@ -1069,7 +1057,7 @@ test('captures file-level failures without inventing test cases', async () => {
 });
 
 test('records unhandled Rstest errors as an error snapshot', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-test-run-', async (workspaceRoot) => {
     const calls: unknown[] = [];
     const result = createResult({
       ok: false,
@@ -1125,7 +1113,7 @@ test('records unhandled Rstest errors as an error snapshot', async () => {
 });
 
 test('persists a thrown Rstest configuration error as a completed diagnostic snapshot', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-test-run-', async (workspaceRoot) => {
     const configError = new Error('configuration failed');
     configError.name = 'ConfigError';
     const dependencies: TestCaptureDependencies = {
@@ -1183,7 +1171,7 @@ test('persists a thrown Rstest configuration error as a completed diagnostic sna
 });
 
 test('pages project-qualified results in deterministic identity order', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-test-run-', async (workspaceRoot) => {
     const testPath = path.join(workspaceRoot, 'tests', 'shared.test.ts');
     await mkdir(path.dirname(testPath), { recursive: true });
     await writeFile(testPath, 'test');

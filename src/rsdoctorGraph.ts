@@ -1,15 +1,9 @@
 import path from 'node:path';
 import type { ObservedModule, ObservedModuleGraph, OptimizerBound } from './analysisModel.ts';
+import { getNonEmptyString, isRecordObject } from './guards.ts';
+import { compareStrings } from './order.ts';
+import { compareModules } from './reachability.ts';
 import { readRsdoctorArtifact, type RsdoctorArtifact } from './rsdoctor.ts';
-
-const isObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
-const compareStrings = (left: string, right: string): number =>
-  left === right ? 0 : left < right ? -1 : 1;
-
-const getString = (value: unknown): string | undefined =>
-  typeof value === 'string' && value.length > 0 ? value : undefined;
 
 const getId = (value: unknown): string | undefined =>
   typeof value === 'string' && value.length > 0
@@ -28,7 +22,7 @@ const stringifyBailoutReason = (value: unknown): string => {
   if (Array.isArray(value)) {
     return value.map(stringifyBailoutReason).join(' ');
   }
-  if (!isObject(value)) {
+  if (!isRecordObject(value)) {
     return '';
   }
 
@@ -70,13 +64,16 @@ const getOptimizerBound = (value: unknown): OptimizerBound | undefined => {
 };
 
 const normalizeModule = (value: unknown): ObservedModule | undefined => {
-  if (!isObject(value)) return undefined;
+  if (!isRecordObject(value)) return undefined;
   const id = getId(value.id);
   if (id === undefined) return undefined;
 
   const rawPath =
-    getString(value.path) ?? getString(value.webpackId) ?? getString(value.name) ?? '';
-  const rawName = getString(value.webpackId) ?? getString(value.name) ?? rawPath;
+    getNonEmptyString(value.path) ??
+    getNonEmptyString(value.webpackId) ??
+    getNonEmptyString(value.name) ??
+    '';
+  const rawName = getNonEmptyString(value.webpackId) ?? getNonEmptyString(value.name) ?? rawPath;
   const chunks = Array.isArray(value.chunks)
     ? [
         ...new Set(value.chunks.map(getId).filter((entry): entry is string => entry !== undefined)),
@@ -96,11 +93,6 @@ const normalizeModule = (value: unknown): ObservedModule | undefined => {
   };
 };
 
-const compareModules = (left: ObservedModule, right: ObservedModule): number =>
-  compareStrings(left.path, right.path) ||
-  compareStrings(left.name, right.name) ||
-  compareStrings(left.id, right.id);
-
 const normalizeRsdoctorModuleGraph = (artifact: RsdoctorArtifact): ObservedModuleGraph => {
   if (artifact.metadata?.sections.moduleGraph?.status === 'omitted') {
     return {
@@ -112,7 +104,7 @@ const normalizeRsdoctorModuleGraph = (artifact: RsdoctorArtifact): ObservedModul
   }
 
   const moduleGraph = artifact.data.moduleGraph;
-  if (!isObject(moduleGraph)) {
+  if (!isRecordObject(moduleGraph)) {
     return {
       modules: [],
       edges: [],
@@ -134,7 +126,7 @@ const normalizeRsdoctorModuleGraph = (artifact: RsdoctorArtifact): ObservedModul
   }
 
   for (const row of Array.isArray(moduleGraph.modules) ? moduleGraph.modules : []) {
-    if (!isObject(row) || !Array.isArray(row.modules)) continue;
+    if (!isRecordObject(row) || !Array.isArray(row.modules)) continue;
     const container = modulesById.get(getId(row.id) ?? '');
     if (container === undefined || container.chunks.length === 0) continue;
     for (const childId of row.modules.map(getId)) {
@@ -162,7 +154,7 @@ const normalizeRsdoctorModuleGraph = (artifact: RsdoctorArtifact): ObservedModul
     edges.push({ from, to });
   };
   for (const row of Array.isArray(moduleGraph.dependencies) ? moduleGraph.dependencies : []) {
-    if (!isObject(row)) continue;
+    if (!isRecordObject(row)) continue;
     const usesDependencyShape = Object.hasOwn(row, 'dependency');
     addEdge(
       getId(usesDependencyShape ? row.module : row.issuer),
@@ -171,7 +163,7 @@ const normalizeRsdoctorModuleGraph = (artifact: RsdoctorArtifact): ObservedModul
   }
 
   for (const row of Array.isArray(moduleGraph.modules) ? moduleGraph.modules : []) {
-    if (!isObject(row)) continue;
+    if (!isRecordObject(row)) continue;
     const moduleId = getId(row.id);
     for (const importerId of Array.isArray(row.imported) ? row.imported.map(getId) : []) {
       addEdge(importerId, moduleId);

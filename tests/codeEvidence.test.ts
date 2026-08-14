@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
+import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, test } from '@rstest/core';
 import {
@@ -17,6 +16,7 @@ import {
 } from '../src/index.ts';
 import { readCodeEvidence } from '../src/codeEvidence.ts';
 import type { TestExecutionFacet } from '../src/model.ts';
+import { withTempWorkspace } from './helpers.ts';
 
 const fixtureRoot = path.resolve(
   import.meta.dirname,
@@ -24,17 +24,6 @@ const fixtureRoot = path.resolve(
 );
 
 const digest = (value: string): string => createHash('sha256').update(value).digest('hex');
-
-const withTempWorkspace = async (
-  callback: (workspaceRoot: string) => Promise<void>,
-): Promise<void> => {
-  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'rstack-code-evidence-'));
-  try {
-    await callback(workspaceRoot);
-  } finally {
-    await rm(workspaceRoot, { recursive: true, force: true });
-  }
-};
 
 const writeSnapshot = async (
   workspaceRoot: string,
@@ -203,7 +192,7 @@ const lintFacet = (filePath: string): LintFacet => ({
 });
 
 test('joins newest exact-path execution, test outcome, and diagnostics without inferring related tests', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-code-evidence-', async (workspaceRoot) => {
     const source = 'export function value() {\n  return 1;\n}\n';
     const sourcePath = path.join(workspaceRoot, 'src', 'value.ts');
     await mkdir(path.dirname(sourcePath), { recursive: true });
@@ -280,7 +269,7 @@ test('joins newest exact-path execution, test outcome, and diagnostics without i
 });
 
 test('reports captured related-test evidence independently from test execution', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-code-evidence-', async (workspaceRoot) => {
     const facet = testFacet('tests/value.test.ts', 'pass', 'unused');
     facet.relation = {
       sources: ['src/value.ts'],
@@ -358,7 +347,7 @@ test('reports captured related-test evidence independently from test execution',
 });
 
 test('keeps missing, stale, incomplete, and non-overlapping execution evidence inconclusive', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-code-evidence-', async (workspaceRoot) => {
     const sourcePath = path.join(workspaceRoot, 'packages', 'one', 'src', 'value.ts');
     await mkdir(path.dirname(sourcePath), { recursive: true });
     await writeFile(sourcePath, 'before');
@@ -416,7 +405,7 @@ test('keeps missing, stale, incomplete, and non-overlapping execution evidence i
 });
 
 test('distinguishes absent exact test records from matching skipped or todo records', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-code-evidence-', async (workspaceRoot) => {
     const facet = testFacet('src/other.test.ts', 'pass', 'unused');
     facet.files.push({
       project: 'default',
@@ -454,7 +443,7 @@ test('distinguishes absent exact test records from matching skipped or todo reco
 });
 
 test('bounds exact-path diagnostics to two hundred records', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-code-evidence-', async (workspaceRoot) => {
     const facet = lintFacet('src/noisy.ts');
     facet.files[0].messages = Array.from({ length: 205 }, (_, index) => ({
       ruleId: 'no-noise',
@@ -480,7 +469,7 @@ test('bounds exact-path diagnostics to two hundred records', async () => {
 });
 
 test('adds an independent module axis only for an explicit artifact and exposes binding mismatch', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-code-evidence-', async (workspaceRoot) => {
     await cp(fixtureRoot, workspaceRoot, { recursive: true });
     const sourcePath = path.join(workspaceRoot, 'src', 'live.ts');
     await mkdir(path.dirname(sourcePath), { recursive: true });
@@ -587,7 +576,7 @@ test('adds an independent module axis only for an explicit artifact and exposes 
 });
 
 test('uses the full workspace path before a package-relative artifact fallback', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-code-evidence-', async (workspaceRoot) => {
     await cp(fixtureRoot, workspaceRoot, { recursive: true });
     const dataFile = path.join(workspaceRoot, 'rsdoctor-data.json');
     const artifact = JSON.parse(await readFile(dataFile, 'utf8')) as {
@@ -623,7 +612,7 @@ test('uses the full workspace path before a package-relative artifact fallback',
 });
 
 test('preserves execution and diagnostics when the full artifact module path is ambiguous', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-code-evidence-', async (workspaceRoot) => {
     await cp(fixtureRoot, workspaceRoot, { recursive: true });
     const source = 'export const shared = true;\n';
     const sourcePath = path.join(workspaceRoot, 'packages', 'a', 'src', 'shared.ts');

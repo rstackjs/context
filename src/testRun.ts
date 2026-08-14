@@ -20,6 +20,8 @@ import {
   validateExecutionRequest,
   type TestExecutionRequest,
 } from './execution.ts';
+import { decodeCursor, encodeCursor } from './pagination.ts';
+import { toWorkspacePath } from './paths.ts';
 import {
   assessSnapshotFreshness,
   createExplicitContextDescriptor,
@@ -112,9 +114,6 @@ type TestCaptureDependencies = {
   }) => boolean | Promise<boolean>;
   hasCoverageProvider?: (packageRoot: string) => boolean | Promise<boolean>;
 };
-
-const toWorkspacePath = (workspaceRoot: string, filePath: string): string =>
-  path.relative(workspaceRoot, path.resolve(workspaceRoot, filePath)).split(path.sep).join('/');
 
 const optionalString = <K extends keyof TestErrorRecord>(
   key: K,
@@ -493,15 +492,6 @@ const captureTestSnapshot = async (
   };
 };
 
-const decodeCursor = (cursor: string | undefined): number => {
-  if (cursor === undefined) return 0;
-  const value = Buffer.from(cursor, 'base64url').toString('utf8');
-  if (!/^(?:0|[1-9]\d*)$/u.test(value)) throw new Error('Invalid test result cursor.');
-  return Number(value);
-};
-
-const encodeCursor = (offset: number): string => Buffer.from(String(offset)).toString('base64url');
-
 const listTestResults = async (
   workspaceRoot: string,
   query: TestResultsQuery,
@@ -527,7 +517,7 @@ const listTestResults = async (
         (query.status === undefined || item.status === query.status),
     )
     .sort(compareTestCases);
-  const offset = decodeCursor(query.cursor);
+  const offset = decodeCursor(query.cursor, 'Invalid test result cursor.');
   const limit = query.limit ?? 50;
   if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
     throw new Error('Test result limit must be an integer from 1 to 200.');

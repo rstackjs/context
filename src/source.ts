@@ -1,7 +1,9 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { access, readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { sha256Hex } from './guards.ts';
+import { toWorkspacePath } from './paths.ts';
 import {
   contextStoreSchemaVersion,
   type ContextDescriptor,
@@ -50,17 +52,6 @@ const rstackConfigFileNames = [
   'rstack.config.mts',
   'rstack.config.mjs',
 ] as const;
-
-const toWorkspacePath = (workspaceRoot: string, filePath: string): string => {
-  const relativePath = path
-    .relative(path.resolve(workspaceRoot), path.resolve(workspaceRoot, filePath))
-    .split(path.sep)
-    .join('/');
-  return relativePath || '.';
-};
-
-const digest = (content: string | Buffer): string =>
-  createHash('sha256').update(content).digest('hex');
 
 const resolveInternalConfigPath = (moduleDirectory: string, fileName: string): string => {
   const siblingPath = path.join(moduleDirectory, fileName);
@@ -116,15 +107,15 @@ const resolveExplicitCaptureTarget = async (
 };
 
 const createExplicitContextDescriptor = (options: ExplicitContextOptions): ContextDescriptor => {
-  const packageRoot = toWorkspacePath(options.workspaceRoot, options.packageRoot);
+  const packageRoot = toWorkspacePath(options.workspaceRoot, options.packageRoot) || '.';
   const configPath =
     options.configPath === undefined
       ? undefined
-      : toWorkspacePath(options.workspaceRoot, options.configPath);
+      : toWorkspacePath(options.workspaceRoot, options.configPath) || '.';
   const identity = [options.producer, packageRoot, configPath ?? ''].join('\u0000');
 
   return {
-    contextId: `ctx_${digest(identity).slice(0, 24)}`,
+    contextId: `ctx_${sha256Hex(identity).slice(0, 24)}`,
     packageRoot,
     product: 'development',
     ...(options.packageName === undefined ? {} : { packageName: options.packageName }),
@@ -148,10 +139,10 @@ const recordContextInputFiles = async (
 ): Promise<ContextInputFile[]> =>
   Promise.all(
     filePaths.map(async (filePath) => {
-      const relativePath = toWorkspacePath(workspaceRoot, filePath);
+      const relativePath = toWorkspacePath(workspaceRoot, filePath) || '.';
       return {
         path: relativePath,
-        digest: digest(await readFile(path.resolve(workspaceRoot, relativePath))),
+        digest: sha256Hex(await readFile(path.resolve(workspaceRoot, relativePath))),
       };
     }),
   ).then((inputs) => inputs.sort((left, right) => left.path.localeCompare(right.path)));
@@ -169,7 +160,7 @@ const assessSnapshotFreshness = async (
     await Promise.all(
       source.inputs.map(async (input) => {
         try {
-          const currentDigest = digest(await readFile(path.resolve(workspaceRoot, input.path)));
+          const currentDigest = sha256Hex(await readFile(path.resolve(workspaceRoot, input.path)));
           return currentDigest === input.digest ? undefined : input.path;
         } catch {
           return input.path;

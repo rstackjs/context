@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { lintFacetDiagnostics, type LintFacetDiagnostic } from './lint.ts';
 import {
   type ContextFreshness,
   type LintFacet,
@@ -22,17 +23,7 @@ type SnapshotDiffRequest = {
 type SnapshotDiffIncompatibilityReason =
   'schema-version' | 'producer' | 'context' | 'facet' | 'selection';
 
-type SnapshotDiagnostic = {
-  path: string;
-  ruleId: string | null;
-  severity: 'error' | 'warning';
-  message: string;
-  line: number;
-  column: number;
-  endLine?: number;
-  endColumn?: number;
-  fixable: boolean;
-};
+type SnapshotDiagnostic = LintFacetDiagnostic;
 
 type SnapshotTestFileError = {
   kind: 'file-error';
@@ -83,21 +74,6 @@ const testIdentity = (
       ? JSON.stringify([result.project, result.path, result.kind, result.error.name])
       : JSON.stringify([result.kind, result.error.name])
     : JSON.stringify([result.project, result.path, result.parentNames ?? [], result.name]);
-
-const lintDiagnostics = (facet: LintFacet): SnapshotDiagnostic[] =>
-  facet.files.flatMap((file) =>
-    file.messages.map((message) => ({
-      path: file.path,
-      ruleId: message.ruleId,
-      severity: message.severity === 2 ? ('error' as const) : ('warning' as const),
-      message: message.message,
-      line: message.line,
-      column: message.column,
-      ...(message.endLine === undefined ? {} : { endLine: message.endLine }),
-      ...(message.endColumn === undefined ? {} : { endColumn: message.endColumn }),
-      fixable: message.fix !== undefined,
-    })),
-  );
 
 const testResults = (
   facet: TestFacet,
@@ -196,8 +172,8 @@ const diffStoredContextSnapshots = (
   const items =
     kind === 'diagnostics'
       ? diffItems(
-          lintDiagnostics(leftFacet as LintFacet),
-          lintDiagnostics(rightFacet as LintFacet),
+          lintFacetDiagnostics(leftFacet as LintFacet),
+          lintFacetDiagnostics(rightFacet as LintFacet),
           diagnosticIdentity,
         )
       : diffItems(

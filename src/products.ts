@@ -3,25 +3,23 @@ import path from 'node:path';
 import type {
   ContractField,
   ContractTarget,
+  ModuleRef,
   ObservedModule,
   ObservedModuleGraph,
   ProductRoot,
   ProductRootSet,
 } from './analysisModel.ts';
+import { isRecordObject } from './guards.ts';
 import type { ContextDescriptor } from './model.ts';
-
-const isObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
-const compareStrings = (left: string, right: string): number =>
-  left === right ? 0 : left < right ? -1 : 1;
+import { compareStrings } from './order.ts';
+import { normalizeModuleSelector } from './paths.ts';
 
 const collectStringLeaves = (value: unknown, targets: string[]): void => {
   if (typeof value === 'string') {
     targets.push(value);
   } else if (Array.isArray(value)) {
     for (const entry of value) collectStringLeaves(entry, targets);
-  } else if (isObject(value)) {
+  } else if (isRecordObject(value)) {
     for (const entry of Object.values(value)) collectStringLeaves(entry, targets);
   }
 };
@@ -38,7 +36,7 @@ const readContractTargets = async (
   } catch {
     return undefined;
   }
-  if (!isObject(manifest)) return undefined;
+  if (!isRecordObject(manifest)) return undefined;
 
   const pairs: Array<{ field: ContractField; target: string }> = [];
   for (const field of ['exports', 'bin'] as const) {
@@ -57,27 +55,24 @@ const readContractTargets = async (
   );
 };
 
-const normalizeTarget = (value: string): string =>
-  path.posix.normalize(value.replaceAll('\\', '/')).replace(/^\.\//u, '');
-
 const matchesTarget = (module: ObservedModule, target: string, packageRoot: string): boolean => {
-  const modulePath = normalizeTarget(module.path);
-  const normalizedTarget = normalizeTarget(target);
+  const modulePath = normalizeModuleSelector(module.path);
+  const normalizedTarget = normalizeModuleSelector(target);
   if (modulePath.split('/').includes('node_modules')) return false;
-  const normalizedPackageRoot = normalizeTarget(packageRoot);
+  const normalizedPackageRoot = normalizeModuleSelector(packageRoot);
   const scopedTarget =
     normalizedPackageRoot === '.'
       ? normalizedTarget
-      : normalizeTarget(`${normalizedPackageRoot}/${normalizedTarget}`);
+      : normalizeModuleSelector(`${normalizedPackageRoot}/${normalizedTarget}`);
   return modulePath === scopedTarget || modulePath.endsWith(`/${scopedTarget}`);
 };
 
-const toRootModule = ({
+const toModuleRef = ({
   isEntry: _,
   optimizerBound: __,
   optimizerReasons: ___,
   ...module
-}: ObservedModule) => module;
+}: ObservedModule): ModuleRef => module;
 
 const addRoot = (roots: ProductRoot[], root: ProductRoot): void => {
   if (roots.some(({ kind, module }) => kind === root.kind && module.id === root.module.id)) {
@@ -101,7 +96,7 @@ const resolveProductRoots = async (
   for (const module of entries) {
     addRoot(roots, {
       kind: 'production-entry',
-      module: toRootModule(module),
+      module: toModuleRef(module),
       label: `entry: ${module.name}`,
     });
   }
@@ -113,6 +108,7 @@ const resolveProductRoots = async (
     if (targets === undefined) {
       bounds.push('package-manifest-unavailable');
     } else {
+      const modulesById = new Map(graph.modules.map((module) => [module.id, module]));
       contractTargets = targets.map(({ field, target }) => ({
         field,
         target,
@@ -127,10 +123,10 @@ const resolveProductRoots = async (
         }
         if (target.field === 'types') continue;
         for (const moduleId of target.matchedModuleIds) {
-          const module = graph.modules.find(({ id }) => id === moduleId)!;
+          const module = modulesById.get(moduleId)!;
           addRoot(roots, {
             kind: 'published-contract',
-            module: toRootModule(module),
+            module: toModuleRef(module),
             label: `package.json ${target.field}: ${target.target}`,
           });
         }
@@ -143,7 +139,7 @@ const resolveProductRoots = async (
     if (module.optimizerBound === 'side-effect') {
       addRoot(roots, {
         kind: 'side-effect',
-        module: toRootModule(module),
+        module: toModuleRef(module),
         label: `side-effect bailout: ${module.name}`,
       });
     }
@@ -152,7 +148,7 @@ const resolveProductRoots = async (
     if (module.optimizerBound !== undefined && module.optimizerBound !== 'side-effect') {
       addRoot(roots, {
         kind: 'conservative-runtime',
-        module: toRootModule(module),
+        module: toModuleRef(module),
         label: `${module.optimizerBound} bailout: ${module.name}`,
       });
     }
@@ -171,4 +167,4 @@ const resolveProductRoots = async (
   };
 };
 
-export { resolveProductRoots };
+export { resolveProductRoots, toModuleRef };

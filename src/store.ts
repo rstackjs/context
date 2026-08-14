@@ -13,6 +13,7 @@ import {
   type ContextWorkspaceStatus,
   type StoredContextSnapshot,
 } from './model.ts';
+import { compareStringsDescending } from './order.ts';
 import {
   compareContextSnapshotGenerationFileNames,
   getContextSnapshotGenerationFileName,
@@ -243,12 +244,9 @@ const compareStoredSnapshots = (
   left: StoredContextSnapshot,
   right: StoredContextSnapshot,
 ): number =>
-  compareDescending(left.snapshot.observedAt, right.snapshot.observedAt) ||
-  compareDescending(left.run.startedAt, right.run.startedAt) ||
-  compareDescending(left.snapshot.snapshotId, right.snapshot.snapshotId);
-
-const compareDescending = (left: string, right: string): number =>
-  left === right ? 0 : left > right ? -1 : 1;
+  compareStringsDescending(left.snapshot.observedAt, right.snapshot.observedAt) ||
+  compareStringsDescending(left.run.startedAt, right.run.startedAt) ||
+  compareStringsDescending(left.snapshot.snapshotId, right.snapshot.snapshotId);
 
 const readContextSnapshots = async (
   workspaceRoot: string,

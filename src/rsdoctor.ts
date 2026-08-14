@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import { getNonEmptyString, isRecordObject } from './guards.ts';
 import type { JsonValue } from './model.ts';
 
 const supportedToolNames = [
@@ -109,9 +110,6 @@ type RsdoctorAdapter = {
   >;
 };
 
-const isObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
 const isSupportedToolName = (name: string): name is RsdoctorToolName =>
   supportedToolNames.some((supportedName) => supportedName === name);
 
@@ -177,7 +175,7 @@ const matchesSchemaType = (value: unknown, type: unknown): boolean => {
     case 'number':
       return typeof value === 'number' && Number.isFinite(value);
     case 'object':
-      return isObject(value);
+      return isRecordObject(value);
     case 'string':
       return typeof value === 'string';
     default:
@@ -186,7 +184,7 @@ const matchesSchemaType = (value: unknown, type: unknown): boolean => {
 };
 
 const matchesJsonSchema = (value: unknown, schema: unknown): boolean => {
-  if (!isObject(schema) || !matchesSchemaType(value, schema.type)) {
+  if (!isRecordObject(schema) || !matchesSchemaType(value, schema.type)) {
     return false;
   }
 
@@ -199,15 +197,15 @@ const matchesJsonSchema = (value: unknown, schema: unknown): boolean => {
     }
   }
 
-  if (Array.isArray(value) && isObject(schema.items)) {
+  if (Array.isArray(value) && isRecordObject(schema.items)) {
     return value.every((entry) => matchesJsonSchema(entry, schema.items));
   }
 
-  if (!isObject(value)) {
+  if (!isRecordObject(value)) {
     return true;
   }
 
-  const properties = isObject(schema.properties) ? schema.properties : {};
+  const properties = isRecordObject(schema.properties) ? schema.properties : {};
   if (
     Array.isArray(schema.required) &&
     schema.required.some((key) => typeof key === 'string' && !(key in value))
@@ -223,7 +221,7 @@ const matchesJsonSchema = (value: unknown, schema: unknown): boolean => {
       }
     } else if (schema.additionalProperties === false) {
       return false;
-    } else if (isObject(schema.additionalProperties)) {
+    } else if (isRecordObject(schema.additionalProperties)) {
       if (!matchesJsonSchema(entry, schema.additionalProperties)) {
         return false;
       }
@@ -235,24 +233,21 @@ const matchesJsonSchema = (value: unknown, schema: unknown): boolean => {
 
 const getInput = (input: unknown, tool: RsdoctorToolDescriptor): Record<string, unknown> => {
   const resolvedInput = input === undefined ? {} : input;
-  if (!isObject(resolvedInput) || !matchesJsonSchema(resolvedInput, tool.inputSchema)) {
+  if (!isRecordObject(resolvedInput) || !matchesJsonSchema(resolvedInput, tool.inputSchema)) {
     throw new Error('Rsdoctor tool input does not match its schema.');
   }
 
   return resolvedInput;
 };
 
-const getOptionalString = (value: unknown): string | undefined =>
-  typeof value === 'string' && value.length > 0 ? value : undefined;
-
 const getCompilationIdentity = (
   value: Record<string, unknown>,
 ): RsdoctorArtifactCompilationIdentity | undefined => {
-  const compilationHash = getOptionalString(value.compilationHash);
-  const environment = getOptionalString(value.environment);
-  const target = getOptionalString(value.target);
+  const compilationHash = getNonEmptyString(value.compilationHash);
+  const environment = getNonEmptyString(value.environment);
+  const target = getNonEmptyString(value.target);
   const targets = Array.isArray(value.target)
-    ? value.target.filter((entry): entry is string => getOptionalString(entry) !== undefined)
+    ? value.target.filter((entry): entry is string => getNonEmptyString(entry) !== undefined)
     : undefined;
   if (Array.isArray(value.target) && targets?.length !== value.target.length) return undefined;
   if (value.target !== undefined && target === undefined && targets === undefined) return undefined;
@@ -266,20 +261,24 @@ const getCompilationIdentity = (
 };
 
 const getArtifactMetadata = (value: unknown): RsdoctorArtifactMetadata | undefined => {
-  if (!isObject(value) || value.schemaVersion !== 1) return undefined;
-  if (!isObject(value.producer) || !isObject(value.output) || !isObject(value.build)) {
+  if (!isRecordObject(value) || value.schemaVersion !== 1) return undefined;
+  if (
+    !isRecordObject(value.producer) ||
+    !isRecordObject(value.output) ||
+    !isRecordObject(value.build)
+  ) {
     return undefined;
   }
-  if (!isObject(value.build.compiler) || !isObject(value.sections)) return undefined;
+  if (!isRecordObject(value.build.compiler) || !isRecordObject(value.sections)) return undefined;
 
-  const producerName = getOptionalString(value.producer.name);
-  const producerVersion = getOptionalString(value.producer.version);
+  const producerName = getNonEmptyString(value.producer.name);
+  const producerVersion = getNonEmptyString(value.producer.version);
   const mode = value.output.mode;
-  const id = getOptionalString(value.build.id);
-  const root = getOptionalString(value.build.root);
-  const compilerName = getOptionalString(value.build.compiler.name);
-  const compilerType = getOptionalString(value.build.compiler.type);
-  const compilerVersion = getOptionalString(value.build.compiler.version);
+  const id = getNonEmptyString(value.build.id);
+  const root = getNonEmptyString(value.build.root);
+  const compilerName = getNonEmptyString(value.build.compiler.name);
+  const compilerType = getNonEmptyString(value.build.compiler.type);
+  const compilerVersion = getNonEmptyString(value.build.compiler.version);
   const identity = getCompilationIdentity(value.build);
   if (
     producerName !== '@rsdoctor/core' ||
@@ -301,7 +300,7 @@ const getArtifactMetadata = (value: unknown): RsdoctorArtifactMetadata | undefin
 
   const sections: RsdoctorArtifactMetadata['sections'] = {};
   for (const [name, state] of Object.entries(value.sections)) {
-    if (!isObject(state)) return undefined;
+    if (!isRecordObject(state)) return undefined;
     if (state.status === 'collected') {
       sections[name] = { status: 'collected' };
     } else if (state.status === 'omitted' && isArtifactOmissionReason(state.reason)) {
@@ -317,8 +316,8 @@ const getArtifactMetadata = (value: unknown): RsdoctorArtifactMetadata | undefin
     if (!Array.isArray(value.build.compilers)) return undefined;
     compilers = [];
     for (const entry of value.build.compilers) {
-      if (!isObject(entry)) return undefined;
-      const name = getOptionalString(entry.name);
+      if (!isRecordObject(entry)) return undefined;
+      const name = getNonEmptyString(entry.name);
       const compilerIdentity = getCompilationIdentity(entry);
       if (
         name === undefined ||
@@ -378,7 +377,7 @@ const readRsdoctorArtifact = async (
     throw new Error('Rsdoctor data file must contain valid JSON.');
   }
 
-  if (!isObject(parsed) || !isObject(parsed.data)) {
+  if (!isRecordObject(parsed) || !isRecordObject(parsed.data)) {
     throw new Error('Rsdoctor data file must contain an object data field.');
   }
 
@@ -405,7 +404,7 @@ const analyzeRsdoctorArtifact = async (
   workspaceRoot: string,
   request: RsdoctorAnalysisRequest,
 ): Promise<RsdoctorAnalysisResult> => {
-  if (!isObject(request) || typeof request.toolName !== 'string' || !request.toolName) {
+  if (!isRecordObject(request) || typeof request.toolName !== 'string' || !request.toolName) {
     throw new Error('Rsdoctor tool name is invalid.');
   }
   if (!isSupportedToolName(request.toolName)) {

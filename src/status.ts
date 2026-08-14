@@ -1,11 +1,9 @@
-import { createHash } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
+import { sha256Hex } from './guards.ts';
 import { type ProjectContextStatus, type ProjectStatus } from './model.ts';
+import { compareStrings } from './order.ts';
 import { assessSnapshotFreshness } from './source.ts';
 import { readContextWorkspaceStatus } from './store.ts';
-
-const compareStrings = (left: string, right: string): number =>
-  left === right ? 0 : left < right ? -1 : 1;
 
 const compareProjectContexts = (
   left: ProjectContextStatus & { startedAt: string },
@@ -29,7 +27,7 @@ const compareProjectContexts = (
 const readProjectStatus = async (workspaceRoot: string): Promise<ProjectStatus> => {
   const workspace = await readContextWorkspaceStatus(workspaceRoot);
   const workspacePath = await realpath(workspaceRoot);
-  const workspaceId = `ws_${createHash('sha256').update(workspacePath).digest('hex').slice(0, 24)}`;
+  const workspaceId = `ws_${sha256Hex(workspacePath).slice(0, 24)}`;
   const currentByContextId = new Map<
     string,
     (typeof workspace.runs)[number]['contexts'][number] & {

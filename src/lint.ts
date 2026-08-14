@@ -1,7 +1,7 @@
-import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { LintMessage, LintResult, RslintOptions } from '@rslint/core';
+import { sha256Hex } from './guards.ts';
 import {
   contextStoreSchemaVersion,
   type ContextFreshness,
@@ -14,6 +14,9 @@ import {
   type TestErrorRecord,
   type TestFacet,
 } from './model.ts';
+import { compareStrings } from './order.ts';
+import { decodeCursor, encodeCursor } from './pagination.ts';
+import { toWorkspacePath } from './paths.ts';
 import {
   assessSnapshotFreshness,
   createExplicitContextDescriptor,
@@ -78,6 +81,18 @@ type DiagnosticsQuery = {
   cursor?: string;
 };
 
+type LintFacetDiagnostic = {
+  path: string;
+  ruleId: string | null;
+  severity: 'error' | 'warning';
+  message: string;
+  line: number;
+  column: number;
+  endLine?: number;
+  endColumn?: number;
+  fixable: boolean;
+};
+
 type DiagnosticRecord = {
   producer: 'rslint' | 'rstest';
   path?: string;
@@ -123,18 +138,6 @@ type LintFixPreviewResult =
 const defaultLimit = 50;
 const maximumLimit = 200;
 
-const digest = (content: string | Buffer): string =>
-  createHash('sha256').update(content).digest('hex');
-
-const toWorkspacePath = (workspaceRoot: string, filePath: string): string =>
-  path
-    .relative(path.resolve(workspaceRoot), path.resolve(workspaceRoot, filePath))
-    .split(path.sep)
-    .join('/');
-
-const compareStrings = (left: string, right: string): number =>
-  left === right ? 0 : left < right ? -1 : 1;
-
 const normalizeMessage = (message: LintMessage): LintMessageRecord => ({
   ruleId: message.ruleId,
   severity: message.severity,
@@ -162,7 +165,7 @@ const normalizeResult = async (
 ): Promise<LintFileRecord> => {
   const filePath = toWorkspacePath(workspaceRoot, result.filePath);
   const source = textCode ?? (await readFile(result.filePath, 'utf8'));
-  const fileDigest = digest(source);
+  const fileDigest = sha256Hex(source);
   const fixedOutput =
     includeFixPreview && result.output !== undefined && result.output !== source
       ? result.output
@@ -284,7 +287,7 @@ const captureLintSnapshot = async (
           ? toWorkspacePath(workspaceRoot, path.resolve(target.packageRoot, request.filePath)) ||
             context.packageRoot
           : context.packageRoot,
-      digest: request.mode === 'text' ? digest(request.code) : digest(''),
+      digest: request.mode === 'text' ? sha256Hex(request.code) : sha256Hex(''),
       errorCount: 1,
       warningCount: 0,
       fixableErrorCount: 0,
@@ -344,7 +347,7 @@ const captureLintSnapshot = async (
   };
   const source: ContextSnapshot['source'] =
     request.mode === 'text'
-      ? { virtualInputDigest: digest(request.code), captureSelection }
+      ? { virtualInputDigest: sha256Hex(request.code), captureSelection }
       : {
           inputs: files.map(({ path: filePath, digest: fileDigest }) => ({
             path: filePath,
@@ -394,10 +397,9 @@ const asTestFacet = (stored: StoredContextSnapshot): TestFacet | undefined =>
     ? (stored.snapshot.facets.test as TestFacet | undefined)
     : undefined;
 
-const lintDiagnostics = (facet: LintFacet): DiagnosticRecord[] =>
+const lintFacetDiagnostics = (facet: LintFacet): LintFacetDiagnostic[] =>
   facet.files.flatMap((file) =>
     file.messages.map((message) => ({
-      producer: 'rslint' as const,
       path: file.path,
       ruleId: message.ruleId,
       severity: message.severity === 2 ? ('error' as const) : ('warning' as const),
@@ -409,6 +411,12 @@ const lintDiagnostics = (facet: LintFacet): DiagnosticRecord[] =>
       fixable: message.fix !== undefined,
     })),
   );
+
+const lintDiagnostics = (facet: LintFacet): DiagnosticRecord[] =>
+  lintFacetDiagnostics(facet).map((diagnostic) => ({
+    producer: 'rslint' as const,
+    ...diagnostic,
+  }));
 
 const testDiagnostic = (
   error: TestErrorRecord,
@@ -460,20 +468,6 @@ const compareDiagnostics = (left: DiagnosticRecord, right: DiagnosticRecord): nu
   compareStrings(left.name ?? '', right.name ?? '') ||
   compareStrings(left.message, right.message);
 
-const decodeCursor = (cursor: string | undefined): number => {
-  if (cursor === undefined) return 0;
-  const decoded = Buffer.from(cursor, 'base64url').toString('utf8');
-  const offset = Number(decoded);
-  if (
-    !/^(?:0|[1-9]\d*)$/u.test(decoded) ||
-    Buffer.from(decoded).toString('base64url') !== cursor ||
-    !Number.isSafeInteger(offset)
-  ) {
-    throw new Error('Invalid diagnostics cursor.');
-  }
-  return offset;
-};
-
 const getLimit = (limit: number | undefined): number => {
   const resolved = limit ?? defaultLimit;
   if (!Number.isSafeInteger(resolved) || resolved < 1 || resolved > maximumLimit) {
@@ -517,7 +511,7 @@ const listDiagnostics = async (
     .filter((item) => query.severity === undefined || item.severity === query.severity)
     .filter((item) => query.ruleId === undefined || item.ruleId === query.ruleId)
     .sort(compareDiagnostics);
-  const offset = decodeCursor(query.cursor);
+  const offset = decodeCursor(query.cursor, 'Invalid diagnostics cursor.');
   const limit = getLimit(query.limit);
   const page = items.slice(offset, offset + limit);
   const nextOffset = offset + page.length;
@@ -531,9 +525,7 @@ const listDiagnostics = async (
     freshness: await assessSnapshotFreshness(workspaceRoot, stored.snapshot),
     total: items.length,
     items: page,
-    ...(nextOffset < items.length
-      ? { nextCursor: Buffer.from(String(nextOffset)).toString('base64url') }
-      : {}),
+    ...(nextOffset < items.length ? { nextCursor: encodeCursor(nextOffset) } : {}),
   };
 };
 
@@ -573,13 +565,20 @@ const getLintFixPreview = async (
   };
 };
 
-export { captureLintSnapshot, diagnosticsFromStoredSnapshot, getLintFixPreview, listDiagnostics };
+export {
+  captureLintSnapshot,
+  diagnosticsFromStoredSnapshot,
+  getLintFixPreview,
+  lintFacetDiagnostics,
+  listDiagnostics,
+};
 export type {
   DiagnosticPage,
   DiagnosticRecord,
   DiagnosticsQuery,
   LintCaptureResult,
   LintCaptureAdapter,
+  LintFacetDiagnostic,
   LintFixPreviewResult,
   LintSnapshotRequest,
   RslintFactory,

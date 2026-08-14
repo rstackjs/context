@@ -1,6 +1,5 @@
 /* rslint-disable @typescript-eslint/no-unsafe-assignment -- Rstest asymmetric matchers are intentionally untyped. */
-import { mkdir, mkdtemp, rm, unlink, writeFile } from 'node:fs/promises';
-import os from 'node:os';
+import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, test } from '@rstest/core';
 import { contextStoreSchemaVersion, type ContextSnapshot } from '../src/model.ts';
@@ -11,18 +10,7 @@ import {
   createExplicitRun,
   recordContextInputFiles,
 } from '../src/source.ts';
-
-const withTempWorkspace = async (
-  callback: (workspaceRoot: string) => Promise<void>,
-): Promise<void> => {
-  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'rstack-context-source-'));
-
-  try {
-    await callback(workspaceRoot);
-  } finally {
-    await rm(workspaceRoot, { force: true, recursive: true });
-  }
-};
+import { withTempWorkspace } from './helpers.ts';
 
 const createSnapshot = (source?: ContextSnapshot['source']): ContextSnapshot => ({
   schemaVersion: contextStoreSchemaVersion,
@@ -38,7 +26,7 @@ const createSnapshot = (source?: ContextSnapshot['source']): ContextSnapshot => 
 });
 
 test('records sorted SHA-256 inputs and reports complete inputs as fresh', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-source-', async (workspaceRoot) => {
     await mkdir(path.join(workspaceRoot, 'src'));
     await writeFile(path.join(workspaceRoot, 'src', 'b.ts'), 'b');
     await writeFile(path.join(workspaceRoot, 'src', 'a.ts'), 'a');
@@ -68,7 +56,7 @@ test('records sorted SHA-256 inputs and reports complete inputs as fresh', async
 });
 
 test('reports changed and missing inputs as stale in lexical order', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-source-', async (workspaceRoot) => {
     await mkdir(path.join(workspaceRoot, 'src'));
     await writeFile(path.join(workspaceRoot, 'src', 'b.ts'), 'b');
     await writeFile(path.join(workspaceRoot, 'src', 'a.ts'), 'a');
@@ -90,7 +78,7 @@ test('reports changed and missing inputs as stale in lexical order', async () =>
 });
 
 test('preserves partial and unknown freshness semantics', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-source-', async (workspaceRoot) => {
     await writeFile(path.join(workspaceRoot, 'test.ts'), 'test');
     const inputs = await recordContextInputFiles(workspaceRoot, ['test.ts']);
 

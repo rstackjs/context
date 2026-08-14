@@ -1,4 +1,3 @@
-import path from 'node:path';
 import type {
   AnalysisProvenance,
   DeadCodeExplanation,
@@ -14,8 +13,12 @@ import type {
   ProductRootsResult,
   UnusedCandidatesResult,
 } from './analysisModel.ts';
+import { getNonEmptyString, isRecordObject } from './guards.ts';
 import type { ContextDescriptor, ContextSnapshot } from './model.ts';
-import { resolveProductRoots } from './products.ts';
+import { compareStrings } from './order.ts';
+import { decodeCursor, encodeCursor } from './pagination.ts';
+import { normalizeModuleSelector } from './paths.ts';
+import { resolveProductRoots, toModuleRef } from './products.ts';
 import { traceModuleGraph, type TraversalResult } from './reachability.ts';
 import {
   readRsdoctorArtifact,
@@ -52,9 +55,6 @@ type RootTraversals = {
 const candidateTraversalOptions = { maxDepth: 32, maxVisited: 20_000 } as const;
 const explanationVisitLimit = 5_000;
 
-const compareStrings = (left: string, right: string): number =>
-  left === right ? 0 : left < right ? -1 : 1;
-
 const isDependencyModulePath = (modulePath: string): boolean => {
   const normalized = modulePath.split('\\').join('/');
   const segments = normalized.split('/');
@@ -65,12 +65,6 @@ const isDependencyModulePath = (modulePath: string): boolean => {
       ['cache', '__virtual__', 'unplugged'].includes(segments[yarnIndex + 1] ?? ''))
   );
 };
-
-const isObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
-const getString = (value: unknown): string | undefined =>
-  typeof value === 'string' && value.length > 0 ? value : undefined;
 
 const getTargets = (value: unknown): string[] =>
   (Array.isArray(value) ? value : [value])
@@ -92,10 +86,10 @@ const bindArtifactToSnapshot = (
 ): AnalysisProvenance['artifactBinding'] => {
   if (snapshot === undefined || metadata === undefined) return 'explicit-unverified';
   const build = snapshot.facets.build;
-  if (!isObject(build)) return 'explicit-unverified';
+  if (!isRecordObject(build)) return 'explicit-unverified';
 
-  const snapshotHash = getString(build.hash);
-  const snapshotEnvironment = getString(build.environment) ?? context.environment;
+  const snapshotHash = getNonEmptyString(build.hash);
+  const snapshotEnvironment = getNonEmptyString(build.environment) ?? context.environment;
   if (snapshotHash === undefined || snapshotEnvironment === undefined) {
     return 'explicit-unverified';
   }
@@ -142,20 +136,10 @@ const bindArtifactToSnapshot = (
   return artifactEnvironment === snapshotEnvironment ? 'exact' : 'mismatch';
 };
 
-const toModuleRef = ({
-  isEntry: _,
-  optimizerBound: __,
-  optimizerReasons: ___,
-  ...module
-}: ObservedModule): ModuleRef => module;
-
 const toSubject = (module: ObservedModule): ModuleCandidate['subject'] => ({
   kind: 'module',
   ...toModuleRef(module),
 });
-
-const normalizeSelector = (value: string): string =>
-  path.posix.normalize(value.replaceAll('\\', '/')).replace(/^\.\//u, '');
 
 const validateLimit = (limit: number | undefined): number => {
   const resolved = limit ?? 50;
@@ -163,20 +147,6 @@ const validateLimit = (limit: number | undefined): number => {
     throw new Error('limit must be an integer from 1 to 100.');
   }
   return resolved;
-};
-
-const decodeUnusedCandidatesCursor = (cursor: string | undefined): number => {
-  if (cursor === undefined) return 0;
-  const value = Buffer.from(cursor, 'base64url').toString('utf8');
-  const offset = Number(value);
-  if (
-    !/^(?:0|[1-9]\d*)$/u.test(value) ||
-    Buffer.from(value).toString('base64url') !== cursor ||
-    !Number.isSafeInteger(offset)
-  ) {
-    throw new Error('Invalid unused candidates cursor.');
-  }
-  return offset;
 };
 
 const validateMaxDepth = (maxDepth: number | undefined, maximum = 16, fallback = 8): number => {
@@ -371,17 +341,17 @@ const resolveModule = (graph: ObservedModuleGraph, selector: string): ObservedMo
   const byId = graph.modules.find(({ id }) => id === selector);
   if (byId !== undefined) return byId;
 
-  const normalized = normalizeSelector(selector);
+  const normalized = normalizeModuleSelector(selector);
   const exact = graph.modules.filter(
     (module) =>
-      normalizeSelector(module.path) === normalized ||
-      normalizeSelector(module.name) === normalized,
+      normalizeModuleSelector(module.path) === normalized ||
+      normalizeModuleSelector(module.name) === normalized,
   );
   if (exact.length === 1) return exact[0];
   if (exact.length > 1) return ambiguous(exact);
 
   const suffix = graph.modules.filter(({ path: modulePath }) => {
-    const normalizedPath = normalizeSelector(modulePath);
+    const normalizedPath = normalizeModuleSelector(modulePath);
     return normalizedPath === normalized || normalizedPath.endsWith(`/${normalized}`);
   });
   if (suffix.length === 1) return suffix[0];
@@ -437,7 +407,7 @@ const findUnusedCandidates = async (
   query: UnusedCandidatesQuery,
 ): Promise<PaginatedUnusedCandidatesResult> => {
   const limit = validateLimit(query.limit);
-  const offset = decodeUnusedCandidatesCursor(query.cursor);
+  const offset = decodeCursor(query.cursor, 'Invalid unused candidates cursor.');
   const { provenance, graph, product } = await loadAnalysis(workspaceRoot, query);
   if (!hasAuthoritativeGraph(graph)) {
     return {
@@ -501,9 +471,7 @@ const findUnusedCandidates = async (
       traversals.conservative.truncated,
     resultTruncated: nextOffset < candidates.length,
     candidates: returnedCandidates,
-    ...(nextOffset < candidates.length
-      ? { nextCursor: Buffer.from(String(nextOffset)).toString('base64url') }
-      : {}),
+    ...(nextOffset < candidates.length ? { nextCursor: encodeCursor(nextOffset) } : {}),
     bounds,
   };
 };

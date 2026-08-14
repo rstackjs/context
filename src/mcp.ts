@@ -4,7 +4,9 @@ import type { ContentBlock } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { readCodeEvidence, type CodeEvidenceResult } from './codeEvidence.ts';
 import { diffContextSnapshots } from './diff.ts';
+import { isRecordObject } from './guards.ts';
 import { captureLintSnapshot, getLintFixPreview, listDiagnostics } from './lint.ts';
+import { decodeCursor, encodeCursor } from './pagination.ts';
 import {
   explainDeadCodeCandidate,
   findUnusedCandidates,
@@ -21,12 +23,15 @@ import { captureTestSnapshot, listTestResults, type TestSnapshotRequest } from '
 
 declare const RSTACK_CONTEXT_VERSION: string;
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
+const readOnlyAnnotations = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  openWorldHint: false,
+} as const;
 
 const summarizeBuildFacet = (value: unknown) => {
   if (
-    !isRecord(value) ||
+    !isRecordObject(value) ||
     typeof value.command !== 'string' ||
     typeof value.environment !== 'string' ||
     typeof value.durationMs !== 'number' ||
@@ -331,7 +336,7 @@ const toMcpError = (error: unknown) => ({
 });
 
 const formatStructuredResult = (result: unknown): string => {
-  if (!isRecord(result)) return 'Rstack result is available in structuredContent.';
+  if (!isRecordObject(result)) return 'Rstack result is available in structuredContent.';
 
   const details: string[] = [];
   const addDetail = (key: string, value: unknown): void => {
@@ -351,17 +356,17 @@ const formatStructuredResult = (result: unknown): string => {
   }
   addDetail('totalVisited', result.totalVisited);
 
-  if (isRecord(result.ownership)) {
+  if (isRecordObject(result.ownership)) {
     addDetail('project', result.ownership.project);
     addDetail('dependency', result.ownership.dependency);
   }
 
-  if (isRecord(result.graph)) {
+  if (isRecordObject(result.graph)) {
     addDetail('moduleCount', result.graph.moduleCount);
     addDetail('edgeCount', result.graph.edgeCount);
   }
 
-  if (isRecord(result.summary)) {
+  if (isRecordObject(result.summary)) {
     for (const key of [
       'files',
       'tests',
@@ -377,16 +382,16 @@ const formatStructuredResult = (result: unknown): string => {
     }
   }
 
-  if (isRecord(result.execution)) {
+  if (isRecordObject(result.execution)) {
     addDetail('executionProvider', result.execution.provider);
     addDetail('executionAvailability', result.execution.availability);
     addDetail('executionCompleteness', result.execution.completeness);
   }
 
   const firstError =
-    Array.isArray(result.errors) && isRecord(result.errors[0])
+    Array.isArray(result.errors) && isRecordObject(result.errors[0])
       ? result.errors[0]
-      : Array.isArray(result.unhandledErrors) && isRecord(result.unhandledErrors[0])
+      : Array.isArray(result.unhandledErrors) && isRecordObject(result.unhandledErrors[0])
         ? result.unhandledErrors[0]
         : undefined;
   if (firstError !== undefined) {
@@ -407,9 +412,7 @@ const toProductRootsMcpResult = (
   result: Awaited<ReturnType<typeof readProductRoots>>,
   rootLimit: number,
 ) => {
-  const rootCounts = Object.fromEntries(
-    result.product.roots.map(({ kind }) => kind).map((kind) => [kind, 0]),
-  ) as Record<string, number>;
+  const rootCounts: Record<string, number> = {};
   for (const { kind } of result.product.roots) rootCounts[kind] = (rootCounts[kind] ?? 0) + 1;
   const roots = result.product.roots.slice(0, rootLimit);
   const rootSummary = {
@@ -447,20 +450,20 @@ const formatCodeEvidence = (result: CodeEvidenceResult): string => {
 const isLiteralEmpty = (value: unknown): boolean =>
   value === '' ||
   (Array.isArray(value) && value.length === 0) ||
-  (isRecord(value) && Object.keys(value).length === 0);
+  (isRecordObject(value) && Object.keys(value).length === 0);
 
 const isRecursivelyZeroShaped = (value: unknown): boolean => {
   if (value === null || value === '' || value === 0) return true;
   if (Array.isArray(value)) return value.every(isRecursivelyZeroShaped);
-  return isRecord(value) && Object.values(value).every(isRecursivelyZeroShaped);
+  return isRecordObject(value) && Object.values(value).every(isRecursivelyZeroShaped);
 };
 
 const findUnavailableSections = (value: unknown): string[] => {
-  if (!isRecord(value) || !Array.isArray(value.sectionEvidence)) return [];
+  if (!isRecordObject(value) || !Array.isArray(value.sectionEvidence)) return [];
   return value.sectionEvidence
     .flatMap((section) => {
       if (
-        !isRecord(section) ||
+        !isRecordObject(section) ||
         typeof section.section !== 'string' ||
         (section.status !== 'omitted' && section.status !== 'unavailable')
       ) {
@@ -496,27 +499,12 @@ type ContextMcpDependencies = {
   serverVersion?: string;
 };
 
-const readOnlyAnnotations = {
-  readOnlyHint: true,
-  destructiveHint: false,
-  openWorldHint: false,
-} as const;
-
-const decodeSnapshotCursor = (cursor: string | undefined): number => {
-  if (cursor === undefined) return 0;
-  const value = Buffer.from(cursor, 'base64url').toString('utf8');
-  if (!/^(?:0|[1-9]\d*)$/u.test(value) || Buffer.from(value).toString('base64url') !== cursor) {
-    throw new Error('Invalid snapshot cursor.');
-  }
-  return Number(value);
-};
-
 const listSnapshots = async (workspaceRoot: string, input: z.infer<typeof snapshotListInput>) => {
   const snapshots = await readContextSnapshots(workspaceRoot, {
     producer: input.producer,
     contextId: input.contextId,
   });
-  const offset = decodeSnapshotCursor(input.cursor);
+  const offset = decodeCursor(input.cursor, 'Invalid snapshot cursor.');
   const selected = snapshots.slice(offset, offset + input.limit);
   const items = await Promise.all(
     selected.map(async ({ run, context, snapshot }) => {
@@ -547,9 +535,7 @@ const listSnapshots = async (workspaceRoot: string, input: z.infer<typeof snapsh
   return {
     total: snapshots.length,
     items,
-    ...(nextOffset < snapshots.length
-      ? { nextCursor: Buffer.from(String(nextOffset)).toString('base64url') }
-      : {}),
+    ...(nextOffset < snapshots.length ? { nextCursor: encodeCursor(nextOffset) } : {}),
   };
 };
 
@@ -574,11 +560,7 @@ const createContextMcpServer = (
       title: 'Rstack context status',
       description:
         'List all recorded checkout-local Rstack contexts and the latest completed build, lint, or test snapshot for each context.',
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        openWorldHint: false,
-      },
+      annotations: readOnlyAnnotations,
     },
     async () => {
       const status = await readProjectStatus(workspaceRoot);
@@ -595,11 +577,7 @@ const createContextMcpServer = (
       title: 'Resolve product roots',
       description: 'Return selected roots for one explicit Rsdoctor module graph.',
       inputSchema: productRootsInput,
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        openWorldHint: false,
-      },
+      annotations: readOnlyAnnotations,
     },
     async ({ contextId, dataFile, rootLimit }) => {
       try {
@@ -621,11 +599,7 @@ const createContextMcpServer = (
       description:
         'Return unreachable module candidates from one explicit Rsdoctor artifact graph.',
       inputSchema: unusedCandidatesInput,
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        openWorldHint: false,
-      },
+      annotations: readOnlyAnnotations,
     },
     async ({ contextId, dataFile, limit, cursor }) => {
       try {
@@ -649,11 +623,7 @@ const createContextMcpServer = (
       description:
         'Explain why one module is reachable, conservatively preserved, or an artifact-scoped candidate.',
       inputSchema: deadCodeExplainInput,
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        openWorldHint: false,
-      },
+      annotations: readOnlyAnnotations,
     },
     async ({ contextId, dataFile, module, maxDepth }) => {
       try {
@@ -677,11 +647,7 @@ const createContextMcpServer = (
       description:
         'Trace bounded module dependencies or dependents within one explicit artifact graph.',
       inputSchema: moduleImpactInput,
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        openWorldHint: false,
-      },
+      annotations: readOnlyAnnotations,
     },
     async ({ contextId, dataFile, module, direction, maxDepth }) => {
       try {
@@ -872,11 +838,7 @@ const createContextMcpServer = (
       title: 'Analyze Rsdoctor artifact',
       description: 'Analyze an explicit Rsdoctor artifact with a catalog tool.',
       inputSchema: rsdoctorAnalyzeInput,
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        openWorldHint: false,
-      },
+      annotations: readOnlyAnnotations,
     },
     async ({ dataFile, input, toolName }) => {
       try {
@@ -889,10 +851,7 @@ const createContextMcpServer = (
           },
         );
         const analysisData =
-          typeof analysis.result === 'object' &&
-          analysis.result !== null &&
-          !Array.isArray(analysis.result) &&
-          'data' in analysis.result
+          isRecordObject(analysis.result) && 'data' in analysis.result
             ? analysis.result.data
             : analysis.result;
         return {
@@ -917,11 +876,7 @@ const createContextMcpServer = (
       description:
         'Return a link to an explicit checkout-local Rsdoctor report artifact when present.',
       inputSchema: reportLinkInput,
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        openWorldHint: false,
-      },
+      annotations: readOnlyAnnotations,
     },
     async ({ dataFile }) => {
       try {

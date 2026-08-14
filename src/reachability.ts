@@ -1,4 +1,5 @@
 import type { ObservedModule, ObservedModuleGraph } from './analysisModel.ts';
+import { compareStrings } from './order.ts';
 
 type TraversalOptions = {
   maxDepth: number;
@@ -11,9 +12,6 @@ type TraversalResult = {
   depth: ReadonlyMap<string, number>;
   truncated: boolean;
 };
-
-const compareStrings = (left: string, right: string): number =>
-  left === right ? 0 : left < right ? -1 : 1;
 
 const compareModules = (left: ObservedModule, right: ObservedModule): number =>
   compareStrings(left.path, right.path) ||
@@ -79,5 +77,5 @@ const traceModuleGraph = (
   return { visited, predecessor, depth, truncated };
 };
 
-export { traceModuleGraph };
+export { compareModules, traceModuleGraph };
 export type { TraversalOptions, TraversalResult };

@@ -1,10 +1,10 @@
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { expect, test } from '@rstest/core';
 import { analyzeRsdoctorArtifact, listRsdoctorToolNames } from '../src/index.ts';
+import { withTempWorkspace } from './helpers.ts';
 
 const validDataFile = 'artifacts/rsdoctor-data.json';
 
@@ -39,18 +39,6 @@ const createArtifactMetadata = (
   ),
 });
 
-const withTempWorkspace = async (
-  callback: (workspaceRoot: string) => Promise<void>,
-): Promise<void> => {
-  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'rstack-rsdoctor-'));
-
-  try {
-    await callback(workspaceRoot);
-  } finally {
-    await rm(workspaceRoot, { force: true, recursive: true });
-  }
-};
-
 const writeArtifact = async (
   workspaceRoot: string,
   dataFile: string,
@@ -80,7 +68,7 @@ test('lists the complete pinned Rsdoctor tool names', () => {
 });
 
 test('listing the pinned Rsdoctor tools does not load the adapter package', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-rsdoctor-', async (workspaceRoot) => {
     const markerFile = path.join(workspaceRoot, 'rsdoctor-loaded');
     const hookFile = path.join(workspaceRoot, 'import-hook.mjs');
     await writeFile(
@@ -123,7 +111,7 @@ listRsdoctorToolNames();`,
 });
 
 test('rejects a missing Rsdoctor artifact', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-rsdoctor-', async (workspaceRoot) => {
     const artifactPath = path.resolve(workspaceRoot, validDataFile);
     await expect(
       analyzeRsdoctorArtifact(workspaceRoot, {
@@ -137,7 +125,7 @@ test('rejects a missing Rsdoctor artifact', async () => {
 });
 
 test('rejects malformed Rsdoctor artifact JSON', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-rsdoctor-', async (workspaceRoot) => {
     await writeArtifact(workspaceRoot, validDataFile, '{not-json');
 
     await expect(
@@ -150,7 +138,7 @@ test('rejects malformed Rsdoctor artifact JSON', async () => {
 });
 
 test('rejects a Rsdoctor artifact missing its data envelope', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-rsdoctor-', async (workspaceRoot) => {
     await writeArtifact(workspaceRoot, validDataFile, '{}');
 
     await expect(
@@ -163,7 +151,7 @@ test('rejects a Rsdoctor artifact missing its data envelope', async () => {
 });
 
 test('rejects a Rsdoctor artifact whose data envelope is not an object', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-rsdoctor-', async (workspaceRoot) => {
     await writeArtifact(workspaceRoot, validDataFile, '{"data":[]}');
 
     await expect(
@@ -176,7 +164,7 @@ test('rejects a Rsdoctor artifact whose data envelope is not an object', async (
 });
 
 test('rejects an unknown Rsdoctor tool name', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-rsdoctor-', async (workspaceRoot) => {
     await writeArtifact(workspaceRoot, validDataFile, '{"data":{}}');
 
     await expect(
@@ -189,7 +177,7 @@ test('rejects an unknown Rsdoctor tool name', async () => {
 });
 
 test('rejects input that does not match the selected tool schema', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-rsdoctor-', async (workspaceRoot) => {
     await writeArtifact(workspaceRoot, validDataFile, '{"data":{}}');
 
     await expect(
@@ -203,7 +191,7 @@ test('rejects input that does not match the selected tool schema', async () => {
 });
 
 test('runs a real Rsdoctor catalog tool against a valid artifact fixture', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-rsdoctor-', async (workspaceRoot) => {
     await writeArtifact(
       workspaceRoot,
       validDataFile,
@@ -242,7 +230,7 @@ test('maps every Rsdoctor catalog tool to its required artifact sections', async
     ['tree_shaking_summary', ['errors']],
   ] as const;
 
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-rsdoctor-', async (workspaceRoot) => {
     for (const [toolName, sections] of cases) {
       const dataFile = `artifacts/${toolName}.json`;
       await writeArtifact(
@@ -264,7 +252,7 @@ test('maps every Rsdoctor catalog tool to its required artifact sections', async
 });
 
 test('distinguishes collected empty data from an omitted artifact section', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-rsdoctor-', async (workspaceRoot) => {
     const collectedDataFile = 'artifacts/collected.json';
     const omittedDataFile = 'artifacts/omitted.json';
     await writeArtifact(

@@ -1,9 +1,9 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { ConfigParams, RsbuildConfig } from '@rsbuild/core';
 import { expect, test } from '@rstest/core';
 import { createRstackContextPlugin } from '../src/rstack.ts';
+import { withTempWorkspace as withSharedTempWorkspace } from './helpers.ts';
 
 type BuildConfig = { marker: string; plugins?: RsbuildConfig['plugins'] };
 type Modifier = (
@@ -13,18 +13,14 @@ type Modifier = (
 
 const withTempWorkspace = async (
   callback: (workspaceRoot: string) => Promise<void>,
-): Promise<void> => {
-  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'rstack-context-plugin-'));
-  try {
+): Promise<void> =>
+  withSharedTempWorkspace('rstack-context-plugin-', async (workspaceRoot) => {
     await writeFile(
       path.join(workspaceRoot, 'package.json'),
       JSON.stringify({ name: 'context-fixture', private: true }),
     );
     await callback(workspaceRoot);
-  } finally {
-    await rm(workspaceRoot, { force: true, recursive: true });
-  }
-};
+  });
 
 const setupPlugin = (
   plugin: ReturnType<typeof createRstackContextPlugin>,

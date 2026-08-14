@@ -1,6 +1,5 @@
 /* rslint-disable @typescript-eslint/no-unsafe-assignment -- Rstest asymmetric matchers are intentionally untyped. */
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
-import os from 'node:os';
+import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, test } from '@rstest/core';
 import {
@@ -12,18 +11,7 @@ import {
   type ContextRunManifest,
   type ContextSnapshot,
 } from '../src/index.ts';
-
-const withTempWorkspace = async (
-  callback: (workspaceRoot: string) => Promise<void>,
-): Promise<void> => {
-  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'rstack-context-status-'));
-
-  try {
-    await callback(workspaceRoot);
-  } finally {
-    await rm(workspaceRoot, { force: true, recursive: true });
-  }
-};
+import { withTempWorkspace } from './helpers.ts';
 
 const createRun = (
   runId: string,
@@ -40,7 +28,7 @@ const createRun = (
 });
 
 test('returns a stable anonymous status for an empty standalone store', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-status-', async (workspaceRoot) => {
     const status = await readProjectStatus(workspaceRoot);
 
     expect(status).toEqual({
@@ -54,7 +42,7 @@ test('returns a stable anonymous status for an empty standalone store', async ()
 });
 
 test('projects only the latest run for each context in deterministic order', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-status-', async (workspaceRoot) => {
     await mkdir(path.join(workspaceRoot, 'packages', 'app'), {
       recursive: true,
     });

@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { TestRunResult } from '@rstest/core/api';
@@ -11,6 +10,15 @@ import type {
   TestExecutionRequestedSelection,
   TestExecutionStatement,
 } from './model.ts';
+import {
+  isIdentifier,
+  isNonNegativeInteger,
+  isPositiveInteger,
+  isRecordObject,
+  sha256Hex,
+  sha256Pattern,
+} from './guards.ts';
+import { toWorkspacePath } from './paths.ts';
 
 type TestExecutionRequest = {
   include?: string[];
@@ -40,27 +48,10 @@ type ExecutionFileCandidate = {
   entries: ExecutionEntry[];
 };
 
-const sha256Pattern = /^[0-9a-f]{64}$/u;
-
-const isRecordObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
-const isIdentifier = (value: unknown): value is string =>
-  typeof value === 'string' && value.length > 0;
-
-const isNonNegativeInteger = (value: unknown): value is number =>
-  Number.isSafeInteger(value) && (value as number) >= 0;
-
-const isPositiveInteger = (value: unknown): value is number =>
-  Number.isSafeInteger(value) && (value as number) > 0;
-
 const hasOnlyKeys = (value: Record<string, unknown>, keys: readonly string[]): boolean => {
   const allowed = new Set(keys);
   return Object.keys(value).every((key) => allowed.has(key));
 };
-
-const toWorkspacePath = (workspaceRoot: string, filePath: string): string =>
-  path.relative(workspaceRoot, path.resolve(workspaceRoot, filePath)).split(path.sep).join('/');
 
 const normalizeLocation = (value: unknown): TestExecutionLocation | undefined => {
   if (!isRecordObject(value) || !isRecordObject(value.start) || !isRecordObject(value.end)) {
@@ -221,7 +212,7 @@ const requestedExecutionSelection = (
 
 const withExecutionDigest = (facet: Omit<TestExecutionFacet, 'digest'>): TestExecutionFacet => ({
   ...facet,
-  digest: createHash('sha256').update(JSON.stringify(facet)).digest('hex'),
+  digest: sha256Hex(JSON.stringify(facet)),
 });
 
 const unavailableExecutionFacet = (request: TestExecutionRequest): TestExecutionFacet =>
@@ -285,9 +276,7 @@ const normalizeExecutionFacet = async (
       branches: [],
     };
     try {
-      file.digest = createHash('sha256')
-        .update(await readFile(candidate.absolutePath))
-        .digest('hex');
+      file.digest = sha256Hex(await readFile(candidate.absolutePath));
     } catch {
       readable = false;
     }

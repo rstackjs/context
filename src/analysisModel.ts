@@ -1,3 +1,5 @@
+import type { ContextCompleteness, ContextRunStatus } from './model.ts';
+
 type ModuleRef = {
   id: string;
   path: string;
@@ -65,8 +67,8 @@ type AnalysisProvenance = {
     runId: string;
     snapshotId: string;
     observedAt: string;
-    status: 'queued' | 'running' | 'pass' | 'fail' | 'cancelled' | 'error';
-    buildCompleteness?: 'complete' | 'partial' | 'disabled' | 'unsupported';
+    status: ContextRunStatus;
+    buildCompleteness?: ContextCompleteness;
   };
 };
 

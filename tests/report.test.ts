@@ -1,23 +1,11 @@
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { expect, test } from '@rstest/core';
 import { resolveReportFile, resolveRsdoctorReport } from '../src/report.ts';
+import { withTempWorkspace } from './helpers.ts';
 
 const validDataFile = 'artifacts/rsdoctor-data.json';
-
-const withTempWorkspace = async (
-  callback: (workspaceRoot: string) => Promise<void>,
-): Promise<void> => {
-  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'rstack-rsdoctor-report-'));
-
-  try {
-    await callback(workspaceRoot);
-  } finally {
-    await rm(workspaceRoot, { force: true, recursive: true });
-  }
-};
 
 const writeWorkspaceFile = async (
   workspaceRoot: string,
@@ -35,7 +23,7 @@ const writeDataFile = async (workspaceRoot: string): Promise<void> => {
 };
 
 test('resolves the conventional sibling HTML report before other report candidates', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-rsdoctor-report-', async (workspaceRoot) => {
     await writeDataFile(workspaceRoot);
     const reportPath = await writeWorkspaceFile(
       workspaceRoot,
@@ -55,7 +43,7 @@ test('resolves the conventional sibling HTML report before other report candidat
 });
 
 test('returns a typed missing outcome when a report file does not exist', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-rsdoctor-report-', async (workspaceRoot) => {
     await expect(
       resolveReportFile(workspaceRoot, 'artifacts/report-rsdoctor.html'),
     ).resolves.toEqual({ kind: 'missing' });
@@ -63,7 +51,7 @@ test('returns a typed missing outcome when a report file does not exist', async 
 });
 
 test('resolves one custom sibling HTML report when the conventional report is absent', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-rsdoctor-report-', async (workspaceRoot) => {
     await writeDataFile(workspaceRoot);
     const reportPath = await writeWorkspaceFile(
       workspaceRoot,
@@ -83,7 +71,7 @@ test('resolves one custom sibling HTML report when the conventional report is ab
 });
 
 test('resolves the normal workspace .rsdoctor manifest when no sibling HTML report exists', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-rsdoctor-report-', async (workspaceRoot) => {
     await writeDataFile(workspaceRoot);
     const manifestPath = await writeWorkspaceFile(
       workspaceRoot,
@@ -103,7 +91,7 @@ test('resolves the normal workspace .rsdoctor manifest when no sibling HTML repo
 });
 
 test('returns a no-report response for ambiguous sibling HTML reports', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-rsdoctor-report-', async (workspaceRoot) => {
     await writeDataFile(workspaceRoot);
     await writeWorkspaceFile(workspaceRoot, 'artifacts/first.html', '<html></html>');
     await writeWorkspaceFile(workspaceRoot, 'artifacts/second.html', '<html></html>');
@@ -120,7 +108,7 @@ test('returns a no-report response for ambiguous sibling HTML reports', async ()
 });
 
 test('returns a portable next action for a standalone workspace without a GUI report', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-rsdoctor-report-', async (workspaceRoot) => {
     await writeDataFile(workspaceRoot);
 
     const result = await resolveRsdoctorReport(workspaceRoot, validDataFile);

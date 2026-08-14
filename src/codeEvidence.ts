@@ -1,7 +1,7 @@
-import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { DeadCodeExplanation } from './analysisModel.ts';
+import { sha256Hex } from './guards.ts';
 import { diagnosticsFromStoredSnapshot, type DiagnosticRecord } from './lint.ts';
 import type {
   ContextFreshness,
@@ -11,6 +11,7 @@ import type {
   TestExecutionLocation,
   TestFacet,
 } from './model.ts';
+import { normalizeModuleSelector, toWorkspacePath } from './paths.ts';
 import { explainDeadCodeCandidate, readProductRoots } from './queries.ts';
 import { assessSnapshotFreshness } from './source.ts';
 import { readContextSnapshotById, readContextSnapshots } from './store.ts';
@@ -90,11 +91,8 @@ const normalizeSourcePath = (workspaceRoot: string, value: string): string => {
   if (portable.length === 0 || path.posix.isAbsolute(portable)) {
     throw new Error('path must be a non-empty checkout-relative source path.');
   }
-  const normalized = path.posix.normalize(portable).replace(/^\.\//u, '');
-  const relative = path
-    .relative(workspaceRoot, path.resolve(workspaceRoot, normalized))
-    .split(path.sep)
-    .join('/');
+  const normalized = normalizeModuleSelector(value);
+  const relative = toWorkspacePath(workspaceRoot, normalized);
   if (relative.length === 0 || relative === '..' || relative.startsWith('../')) {
     throw new Error('path must be a non-empty checkout-relative source path.');
   }
@@ -156,9 +154,7 @@ const readCurrentDigest = async (
   sourcePath: string,
 ): Promise<string | undefined> => {
   try {
-    return createHash('sha256')
-      .update(await readFile(path.resolve(workspaceRoot, sourcePath)))
-      .digest('hex');
+    return sha256Hex(await readFile(path.resolve(workspaceRoot, sourcePath)));
   } catch {
     return undefined;
   }

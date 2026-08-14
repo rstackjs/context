@@ -1,6 +1,5 @@
 /* rslint-disable @typescript-eslint/no-unsafe-assignment -- Rstest asymmetric matchers are intentionally untyped. */
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { ConfigParams, RsbuildConfig } from '@rsbuild/core';
 import { expect, test } from '@rstest/core';
@@ -12,6 +11,7 @@ import {
   type BuildMetadataFacet,
   type ResolvedContextWorkspace,
 } from '../src/index.ts';
+import { withTempWorkspace } from './helpers.ts';
 
 type BeforeHook = (context: { environments: Record<string, unknown> }) => Promise<void> | void;
 
@@ -36,18 +36,6 @@ type AfterCompileContext = {
 type ObserverHarness = {
   hooks: ObserverHooks;
   warnings: string[];
-};
-
-const withTempWorkspace = async (
-  callback: (workspaceRoot: string) => Promise<void>,
-): Promise<void> => {
-  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'rstack-build-context-'));
-
-  try {
-    await callback(workspaceRoot);
-  } finally {
-    await rm(workspaceRoot, { force: true, recursive: true });
-  }
 };
 
 const getObserverHarness = (
@@ -196,7 +184,7 @@ test('appends one observer without mutating user config or nested Rslib entries'
 });
 
 test('publishes an aggregate manifest once and advances sequences per environment', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-build-context-', async (workspaceRoot) => {
     const plugin = createBuildContextPlugin({
       producer: 'rslib',
       product: 'library',
@@ -317,7 +305,7 @@ test('publishes an aggregate manifest once and advances sequences per environmen
 });
 
 test('bounds metadata rows and distinguishes disabled deep capture from partial builds', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-build-context-', async (workspaceRoot) => {
     const plugin = createBuildContextPlugin({
       producer: 'rsbuild',
       product: 'application',
@@ -389,7 +377,7 @@ test('bounds metadata rows and distinguishes disabled deep capture from partial 
 });
 
 test('retains bounded valid metadata rows and counts only dropped valid rows', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-build-context-', async (workspaceRoot) => {
     const plugin = createBuildContextPlugin({
       producer: 'rsbuild',
       product: 'application',
@@ -463,7 +451,7 @@ test('retains bounded valid metadata rows and counts only dropped valid rows', a
 });
 
 test('keeps capture failures out of build hooks and warns once per observer', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-build-context-', async (workspaceRoot) => {
     const plugin = createBuildContextPlugin({
       producer: 'rsbuild',
       product: 'application',
@@ -509,7 +497,7 @@ test('keeps capture failures out of build hooks and warns once per observer', as
 });
 
 test('serializes Stats before awaiting manifest publication', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-build-context-', async (workspaceRoot) => {
     const plugin = createBuildContextPlugin({
       producer: 'rsbuild',
       product: 'application',
@@ -542,7 +530,7 @@ test('serializes Stats before awaiting manifest publication', async () => {
 });
 
 test('normalizes metadata paths', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-build-context-', async (workspaceRoot) => {
     const plugin = createBuildContextPlugin({
       producer: 'rsbuild',
       product: 'application',
@@ -593,7 +581,7 @@ test('normalizes metadata paths', async () => {
 });
 
 test('derives stable IDs from normalized identity inputs and separates every identity field', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-build-context-', async (workspaceRoot) => {
     const workspace = {
       workspaceRoot,
       packageRoot: path.join(workspaceRoot, 'packages', 'app'),
@@ -663,7 +651,7 @@ test('derives stable IDs from normalized identity inputs and separates every ide
 });
 
 test('records explicit build variants, normalized output paths, and partial config inputs', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-build-context-', async (workspaceRoot) => {
     const configPath = path.join(workspaceRoot, 'rstack.config.ts');
     const dependencyPath = path.join(workspaceRoot, 'config', 'shared.ts');
     await mkdir(path.dirname(dependencyPath), { recursive: true });

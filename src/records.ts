@@ -10,6 +10,14 @@ import {
   type TestFacet,
 } from './model.ts';
 import { validateExecutionFacet } from './execution.ts';
+import {
+  isIdentifier,
+  isNonNegativeInteger,
+  isPositiveInteger,
+  isRecordObject,
+  sha256Pattern,
+} from './guards.ts';
+import { compareStringsDescending } from './order.ts';
 
 const producers = new Set<ContextProducer>([
   'rsbuild',
@@ -34,25 +42,12 @@ const completenessValues = new Set<ContextCompleteness>([
   'unsupported',
 ]);
 const testStatuses = new Set(['skip', 'pass', 'fail', 'todo']);
-const sha256Pattern = /^[0-9a-f]{64}$/u;
-
-const isRecordObject = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
-
-const isIdentifier = (value: unknown): value is string =>
-  typeof value === 'string' && value.length > 0;
 
 const isRecordPath = (value: unknown): value is string =>
   typeof value === 'string' && value.length > 0;
 
 const isNonNegativeNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0;
-
-const isNonNegativeInteger = (value: unknown): value is number =>
-  Number.isSafeInteger(value) && (value as number) >= 0;
-
-const isPositiveInteger = (value: unknown): value is number =>
-  Number.isSafeInteger(value) && (value as number) > 0;
 
 const isOptionalString = (value: unknown): boolean =>
   value === undefined || typeof value === 'string';
@@ -323,9 +318,6 @@ const parseContextSnapshotGenerationFileName = (
   return { sequence, snapshotId };
 };
 
-const compareDescending = (left: string, right: string): number =>
-  left === right ? 0 : left > right ? -1 : 1;
-
 const compareContextSnapshotGenerationFileNames = (left: string, right: string): number => {
   const leftGeneration = parseContextSnapshotGenerationFileName(left);
   const rightGeneration = parseContextSnapshotGenerationFileName(right);
@@ -336,14 +328,14 @@ const compareContextSnapshotGenerationFileNames = (left: string, right: string):
     if (rightGeneration !== undefined) {
       return 1;
     }
-    return compareDescending(left, right);
+    return compareStringsDescending(left, right);
   }
   if (leftGeneration.sequence !== rightGeneration.sequence) {
     return leftGeneration.sequence > rightGeneration.sequence ? -1 : 1;
   }
   return (
-    compareDescending(leftGeneration.snapshotId, rightGeneration.snapshotId) ||
-    compareDescending(left, right)
+    compareStringsDescending(leftGeneration.snapshotId, rightGeneration.snapshotId) ||
+    compareStringsDescending(left, right)
   );
 };
 

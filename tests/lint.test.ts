@@ -1,7 +1,6 @@
 /* rslint-disable @typescript-eslint/no-unsafe-assignment -- Rstest asymmetric matchers are intentionally untyped. */
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import os from 'node:os';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { LintResult, RslintOptions } from '@rslint/core';
@@ -15,6 +14,7 @@ import {
   writeContextRunManifest,
   writeContextSnapshot,
 } from '../src/store.ts';
+import { withTempWorkspace } from './helpers.ts';
 
 const mocks = {
   closeCalls: 0,
@@ -58,19 +58,8 @@ beforeEach(() => {
   mocks.lintError = undefined;
 });
 
-const withTempWorkspace = async (
-  callback: (workspaceRoot: string) => Promise<void>,
-): Promise<void> => {
-  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'rstack-context-lint-'));
-  try {
-    await callback(workspaceRoot);
-  } finally {
-    await rm(workspaceRoot, { force: true, recursive: true });
-  }
-};
-
 test('loading lint queries does not load the Rslint runtime', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-lint-', async (workspaceRoot) => {
     const markerFile = path.join(workspaceRoot, 'rslint-loaded');
     const hookFile = path.join(workspaceRoot, 'import-hook.mjs');
     await writeFile(
@@ -113,7 +102,7 @@ await listDiagnostics(${JSON.stringify(workspaceRoot)}).catch(() => undefined);`
 });
 
 test('captures an open-ended file snapshot with partial inputs and fail status', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-lint-', async (workspaceRoot) => {
     const aPath = path.join(workspaceRoot, 'a.ts');
     const bPath = path.join(workspaceRoot, 'b.ts');
     await writeFile(aPath, 'const a = 1;\n');
@@ -212,7 +201,7 @@ test('captures an open-ended file snapshot with partial inputs and fail status',
 });
 
 test('captures text without persisting the input and exposes only stored fix output', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-lint-', async (workspaceRoot) => {
     const code = 'let value = 1;\n';
     mocks.results = [
       {
@@ -268,7 +257,7 @@ test('captures text without persisting the input and exposes only stored fix out
 });
 
 test('paginates and filters diagnostics from one frozen snapshot deterministically', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-lint-', async (workspaceRoot) => {
     const aPath = path.join(workspaceRoot, 'src', 'a.ts');
     const bPath = path.join(workspaceRoot, 'src', 'b.ts');
     await mkdir(path.dirname(aPath), { recursive: true });
@@ -334,7 +323,7 @@ test('paginates and filters diagnostics from one frozen snapshot deterministical
 });
 
 test('reports only terminal test failures as current diagnostics', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-lint-', async (workspaceRoot) => {
     const context = {
       contextId: 'ctx_test',
       packageRoot: '.',
@@ -430,7 +419,7 @@ test('reports only terminal test failures as current diagnostics', async () => {
 });
 
 test('selects the newest diagnostic snapshot rather than an unrelated newer build', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-lint-', async (workspaceRoot) => {
     const filePath = path.join(workspaceRoot, 'a.ts');
     await writeFile(filePath, 'a');
     mocks.results = [
@@ -474,7 +463,7 @@ test('selects the newest diagnostic snapshot rather than an unrelated newer buil
 });
 
 test('rejects a malformed diagnostics cursor', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-lint-', async (workspaceRoot) => {
     const filePath = path.join(workspaceRoot, 'a.ts');
     await writeFile(filePath, 'a');
     mocks.results = [
@@ -500,7 +489,7 @@ test('rejects a malformed diagnostics cursor', async () => {
 });
 
 test('returns snapshot provenance for an empty diagnostics page', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-lint-', async (workspaceRoot) => {
     const filePath = path.join(workspaceRoot, 'a.ts');
     await writeFile(filePath, 'a');
     mocks.results = [
@@ -536,7 +525,7 @@ test('returns snapshot provenance for an empty diagnostics page', async () => {
 });
 
 test('reports preview availability without rerunning or applying Rslint', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-lint-', async (workspaceRoot) => {
     const filePath = path.join(workspaceRoot, 'a.ts');
     await writeFile(filePath, 'const a = 1;\n');
     mocks.results = [
@@ -586,7 +575,7 @@ test('reports preview availability without rerunning or applying Rslint', async 
 });
 
 test('persists a partial diagnostic snapshot and closes the engine when linting throws', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-lint-', async (workspaceRoot) => {
     const lintError = new Error('lint failed');
     mocks.lintError = lintError;
 
@@ -638,7 +627,7 @@ test('persists a partial diagnostic snapshot and closes the engine when linting 
 });
 
 test('persists a partial diagnostic snapshot when creating the lint engine throws', async () => {
-  await withTempWorkspace(async (workspaceRoot) => {
+  await withTempWorkspace('rstack-context-lint-', async (workspaceRoot) => {
     const factoryError = new Error('Rslint configuration failed');
 
     await expect(

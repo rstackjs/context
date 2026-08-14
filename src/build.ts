@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import type {
   ConfigParams,
@@ -8,6 +8,7 @@ import type {
   RsbuildConfig,
   RsbuildPlugin,
 } from '@rsbuild/core';
+import { sha256Hex } from './guards.ts';
 import {
   contextStoreSchemaVersion,
   type BuildMetadataFacet,
@@ -17,6 +18,7 @@ import {
   type ContextSnapshot,
   type ContextStoreWriteResult,
 } from './model.ts';
+import { toWorkspacePath } from './paths.ts';
 import { writeContextRunManifest, writeContextSnapshot } from './store.ts';
 import type { ResolvedContextWorkspace } from './workspace.ts';
 
@@ -33,20 +35,17 @@ type BuildContextPluginOptions = {
   now?: () => Date;
 };
 
-const normalizeWorkspacePath = (workspaceRoot: string, value: string): string =>
-  path.relative(workspaceRoot, value).split(path.sep).join('/') || '.';
-
 const getTarget = (environment: EnvironmentContext): string => environment.config.output.target;
 
 const getDistPath = (workspaceRoot: string, environment: EnvironmentContext): string =>
-  normalizeWorkspacePath(workspaceRoot, environment.distPath);
+  toWorkspacePath(workspaceRoot, environment.distPath) || '.';
 
 const getMode = (params: ConfigParams): string => params.envMode ?? params.env;
 
 const normalizeMetadataPath = (workspaceRoot: string, value: string): string =>
   path.posix.normalize(
     path.isAbsolute(value)
-      ? normalizeWorkspacePath(workspaceRoot, value)
+      ? toWorkspacePath(workspaceRoot, value) || '.'
       : value.split(path.sep).join('/').replaceAll('\\', '/'),
   );
 
@@ -185,14 +184,12 @@ const createContextDescriptor = (
   options: BuildContextPluginOptions,
   environment: EnvironmentContext,
 ): ContextDescriptor => {
-  const packageRoot = normalizeWorkspacePath(
-    options.workspace.workspaceRoot,
-    options.workspace.packageRoot,
-  );
+  const packageRoot =
+    toWorkspacePath(options.workspace.workspaceRoot, options.workspace.packageRoot) || '.';
   const configPath =
     options.configPath === undefined
       ? undefined
-      : normalizeWorkspacePath(options.workspace.workspaceRoot, options.configPath);
+      : toWorkspacePath(options.workspace.workspaceRoot, options.configPath) || '.';
   const mode = getMode(options.params);
   const target = getTarget(environment);
   const distPath = getDistPath(options.workspace.workspaceRoot, environment);
@@ -208,7 +205,7 @@ const createContextDescriptor = (
     distPath,
     options.variant ?? '',
   ].join('\u0000');
-  const contextId = `ctx_${createHash('sha256').update(identity).digest('hex').slice(0, 24)}`;
+  const contextId = `ctx_${sha256Hex(identity).slice(0, 24)}`;
 
   return {
     contextId,
