@@ -13,29 +13,29 @@ importers:
         specifier: 1.29.0
         version: 1.29.0(supports-color@7.2.0)(zod@4.4.3)
       '@rsbuild/core':
-        specifier: ~2.1.11
-        version: 2.1.12
+        specifier: 2.1.11
+        version: 2.1.11
       '@rsdoctor/agent-cli':
         specifier: 0.1.1
         version: 0.1.1
       '@rslint/core':
-        specifier: ~0.8.0
+        specifier: 0.8.0
         version: 0.8.0
       '@rstest/core':
-        specifier: ~0.11.6
+        specifier: 0.11.6
         version: 0.11.6
       zod:
         specifier: 4.4.3
         version: 4.4.3
     devDependencies:
       '@rslib/core':
-        specifier: ~1.0.0-beta.3
+        specifier: 1.0.0-beta.3
         version: 1.0.0-beta.3(typescript@7.0.2)
       '@rstest/coverage-istanbul':
         specifier: 0.11.6
         version: 0.11.6(@rstest/core@0.11.6)(supports-color@7.2.0)
       '@types/node':
-        specifier: ^24.13.3
+        specifier: 24.13.3
         version: 24.13.3
       pkg-pr-new:
         specifier: 0.0.87
@@ -44,7 +44,7 @@ importers:
         specifier: 3.9.6
         version: 3.9.6
       typescript:
-        specifier: ^7.0.2
+        specifier: 7.0.2
         version: 7.0.2
 
 packages:
@@ -151,6 +151,16 @@ packages:
     peerDependencies:
       '@emnapi/core': ^1.7.1
       '@emnapi/runtime': ^1.7.1
+
+  '@rsbuild/core@2.1.11':
+    resolution: {integrity: sha512-jA/QwZu8wIljp70TjERVoX+vk2cWU+viHpV9EAdKpA6ifu/pFnThEhbV3RFxBvF/9mB3h7ZRUfdDIyknT+9MWA==}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    hasBin: true
+    peerDependencies:
+      core-js: '>= 3.0.0'
+    peerDependenciesMeta:
+      core-js:
+        optional: true
 
   '@rsbuild/core@2.1.12':
     resolution: {integrity: sha512-xRqNHj/svDqeUzXPahmN4BdxEFCU1rxnVdjxyVV7WgsFfH+L3yAoQMJtIXVGhr00IQseDKkc3eonMF3NGrFj2Q==}
@@ -1004,6 +1014,13 @@ snapshots:
       '@emnapi/runtime': 1.11.3
       '@tybys/wasm-util': 0.10.3
     optional: true
+
+  '@rsbuild/core@2.1.11':
+    dependencies:
+      '@rspack/core': 2.1.10(@swc/helpers@0.5.23)
+      '@swc/helpers': 0.5.23
+    transitivePeerDependencies:
+      - '@module-federation/runtime-tools'
 
   '@rsbuild/core@2.1.12':
     dependencies:
