@@ -356,24 +356,36 @@ test('does not use a module graph that v1 metadata marks as omitted', async () =
   });
 });
 
-test('selects the matching multi-compiler child by environment name', async () => {
+test('does not bind a primary compiler graph to a different multi-compiler child', async () => {
   await withFixtureWorkspace('application', async (workspaceRoot) => {
-    const context = {
+    const webContext = {
       contextId: 'ctx_app_web',
       packageRoot: '.',
       product: 'application',
       environment: 'web',
       target: 'web',
     } as const;
-    await recordBuild(workspaceRoot, context, 'run_web', '2026-08-12T04:00:01.000Z', {
+    const serverContext = {
+      contextId: 'ctx_app_server',
+      packageRoot: '.',
+      product: 'application',
+      environment: 'server',
+      target: 'node',
+    } as const;
+    await recordBuild(workspaceRoot, webContext, 'run_web', '2026-08-12T04:00:01.000Z', {
       hash: 'compilation-web',
       environment: 'web',
       target: ['web'],
     });
+    await recordBuild(workspaceRoot, serverContext, 'run_server', '2026-08-12T04:00:02.000Z', {
+      hash: 'compilation-server',
+      environment: 'server',
+      target: ['node'],
+    });
     await addArtifactMetadata(workspaceRoot, {
       id: 'rsdoctor-build',
       root: workspaceRoot,
-      compiler: { name: 'multi-compiler', type: 'rspack' },
+      compiler: { name: 'server', type: 'rspack' },
       compilers: [
         {
           name: 'server',
@@ -385,13 +397,20 @@ test('selects the matching multi-compiler child by environment name', async () =
       ],
     });
 
-    const candidates = await findUnusedCandidates(workspaceRoot, {
-      contextId: context.contextId,
+    const webCandidates = await findUnusedCandidates(workspaceRoot, {
+      contextId: webContext.contextId,
+      dataFile: 'rsdoctor-data.json',
+    });
+    const serverCandidates = await findUnusedCandidates(workspaceRoot, {
+      contextId: serverContext.contextId,
       dataFile: 'rsdoctor-data.json',
     });
 
-    expect(candidates.provenance.artifactBinding).toBe('exact');
-    expect(candidates.total).toBe(1);
+    expect(webCandidates.provenance.artifactBinding).toBe('mismatch');
+    expect(webCandidates.total).toBe(0);
+    expect(webCandidates.bounds).toContain('artifact-build-mismatch');
+    expect(serverCandidates.provenance.artifactBinding).toBe('exact');
+    expect(serverCandidates.total).toBe(1);
   });
 });
 

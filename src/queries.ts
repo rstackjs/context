@@ -106,13 +106,13 @@ const bindArtifactToSnapshot = (
   let identity: RsdoctorArtifactCompilationIdentity;
   let artifactEnvironment: string | undefined;
   if (metadata.build.compilers !== undefined) {
-    const matchingCompilers = metadata.build.compilers.filter(
-      (compiler) =>
-        compiler.environment === snapshotEnvironment || compiler.name === snapshotEnvironment,
+    const primaryCompilers = metadata.build.compilers.filter(
+      (compiler) => compiler.name === metadata.build.compiler.name,
     );
-    if (matchingCompilers.length !== 1) return 'mismatch';
-    identity = matchingCompilers[0]!;
-    artifactEnvironment = identity.environment ?? matchingCompilers[0].name;
+    if (primaryCompilers.length !== 1) return 'mismatch';
+    const primaryCompiler = primaryCompilers[0]!;
+    identity = primaryCompiler;
+    artifactEnvironment = primaryCompiler.environment ?? primaryCompiler.name;
   } else {
     identity = metadata.build;
     artifactEnvironment =

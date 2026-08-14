@@ -11,7 +11,7 @@ import {
   readProductRoots,
   traceModuleImpact,
 } from './queries.ts';
-import { validateLintFacet } from './records.ts';
+import { validateLintFacet, validateTestFacet } from './records.ts';
 import { analyzeRsdoctorArtifact, listRsdoctorToolNames } from './rsdoctor.ts';
 import { resolveRsdoctorReport } from './report.ts';
 import { assessSnapshotFreshness } from './source.ts';
@@ -21,8 +21,76 @@ import { captureTestSnapshot, listTestResults, type TestSnapshotRequest } from '
 
 declare const RSTACK_CONTEXT_VERSION: string;
 
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+const summarizeBuildFacet = (value: unknown) => {
+  if (
+    !isRecord(value) ||
+    typeof value.command !== 'string' ||
+    typeof value.environment !== 'string' ||
+    typeof value.durationMs !== 'number' ||
+    typeof value.hasErrors !== 'boolean' ||
+    typeof value.hasWarnings !== 'boolean' ||
+    !Array.isArray(value.assets) ||
+    !Array.isArray(value.chunks)
+  ) {
+    return undefined;
+  }
+
+  return {
+    command: value.command,
+    ...(typeof value.mode === 'string' ? { mode: value.mode } : {}),
+    environment: value.environment,
+    durationMs: value.durationMs,
+    ...(typeof value.hash === 'string' ? { hash: value.hash } : {}),
+    hasErrors: value.hasErrors,
+    hasWarnings: value.hasWarnings,
+    assets: value.assets.length,
+    chunks: value.chunks.length,
+  };
+};
+
 const renderProjectStatus = (status: Awaited<ReturnType<typeof readProjectStatus>>): string =>
-  `Rstack project status: ${status.contexts.length} current context${status.contexts.length === 1 ? '' : 's'} (${status.contexts.filter(({ state }) => state === 'ready').length} ready, ${status.contexts.filter(({ state }) => state === 'pending').length} pending); ${status.issues.length} context-store/read issue${status.issues.length === 1 ? '' : 's'}. See structuredContent for details.`;
+  `Rstack project status: ${status.contexts.length} recorded context ${status.contexts.length === 1 ? 'identity' : 'identities'} (${status.contexts.filter(({ state }) => state === 'ready').length} ready, ${status.contexts.filter(({ state }) => state === 'pending').length} pending); ${status.issues.length} context-store/read issue${status.issues.length === 1 ? '' : 's'}. See structuredContent for compact selection details.`;
+
+const summarizeProjectStatus = (status: Awaited<ReturnType<typeof readProjectStatus>>) => ({
+  schemaVersion: status.schemaVersion,
+  workspaceId: status.workspaceId,
+  contexts: status.contexts.map(
+    ({ runId, producer, context, state, latestSnapshot, freshness }) => {
+      const build = summarizeBuildFacet(latestSnapshot?.facets.build);
+      const lint = validateLintFacet(latestSnapshot?.facets.lint);
+      const test = validateTestFacet(latestSnapshot?.facets.test);
+      return {
+        runId,
+        producer,
+        context,
+        state,
+        ...(latestSnapshot === undefined
+          ? {}
+          : {
+              latestSnapshot: {
+                snapshotId: latestSnapshot.snapshotId,
+                observedAt: latestSnapshot.observedAt,
+                status: latestSnapshot.status,
+                completeness: latestSnapshot.completeness,
+                facets: Object.keys(latestSnapshot.facets).sort(),
+                summary: {
+                  ...(build === undefined ? {} : { build }),
+                  ...(lint === undefined ? {} : { lint: lint.totals }),
+                  ...(test === undefined
+                    ? {}
+                    : { test: { stats: test.stats, durationMs: test.durationMs } }),
+                },
+              },
+              freshness,
+            }),
+      };
+    },
+  ),
+  issues: status.issues,
+});
 
 const contextIdInput = z.string().min(1).describe('Context ID returned by project_status.');
 const rsdoctorDataFileInput = z
@@ -253,9 +321,6 @@ const toMcpError = (error: unknown) => ({
   ],
   isError: true,
 });
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const formatStructuredResult = (result: unknown): string => {
   if (!isRecord(result)) return 'Rstack result is available in structuredContent.';
@@ -495,7 +560,7 @@ const createContextMcpServer = (
       const status = await readProjectStatus(workspaceRoot);
       return {
         content: [{ type: 'text', text: renderProjectStatus(status) }],
-        structuredContent: status,
+        structuredContent: summarizeProjectStatus(status),
       };
     },
   );
@@ -756,7 +821,7 @@ const createContextMcpServer = (
     {
       title: 'Capture test snapshot',
       description:
-        'Run one explicit one-shot Rstest capture, optionally selected from related source files, and store its immutable results.',
+        'Run one explicit one-shot Rstest capture for a package with Rstest configured, optionally selected from related source files, and store its immutable results. A host that knows Rstest is not configured returns an error without running unrelated test discovery.',
       inputSchema: testSnapshotInput,
       annotations: {
         readOnlyHint: false,

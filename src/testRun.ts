@@ -91,6 +91,10 @@ type TestCaptureDependencies = {
   wrapperConfigPath?: string;
   withConfigTarget?: ConfigTargetRunner;
   resolveRelatedTests?: ResolveRelatedTests;
+  isTestConfigured?: (target: {
+    packageRoot: string;
+    configPath?: string;
+  }) => boolean | Promise<boolean>;
 };
 
 const toWorkspacePath = (workspaceRoot: string, filePath: string): string =>
@@ -224,6 +228,16 @@ const captureTestSnapshot = async (
   validateExecutionRequest(request.execution);
   validateRelatedSelection(request);
   const target = await resolveExplicitCaptureTarget(workspaceRoot, request);
+  if (
+    dependencies.isTestConfigured !== undefined &&
+    !(await dependencies.isTestConfigured({
+      packageRoot: target.packageRoot,
+      ...(target.configPath === undefined ? {} : { configPath: target.configPath }),
+    }))
+  ) {
+    const packageRoot = toWorkspacePath(workspaceRoot, target.packageRoot) || '.';
+    throw new Error(`Rstest is not configured for package root "${packageRoot}".`);
+  }
   const wrapperConfigPath =
     dependencies.wrapperConfigPath ??
     resolveInternalConfigPath(import.meta.dirname, 'rstestConfig.js');

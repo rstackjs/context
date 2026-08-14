@@ -70,6 +70,22 @@ test('publishes the opt-in Istanbul provider as an exact optional peer', async (
   });
 });
 
+test('does not run Rstest when the host reports that tests are not configured', async () => {
+  await withTempWorkspace(async (workspaceRoot) => {
+    const calls: unknown[] = [];
+    const dependencies = {
+      ...createDependencies(createResult(), calls, 'not_configured'),
+      isTestConfigured: () => Promise.resolve(false),
+    } satisfies TestCaptureDependencies;
+
+    await expect(captureTestSnapshot(workspaceRoot, {}, dependencies)).rejects.toThrow(
+      'Rstest is not configured for package root ".".',
+    );
+    expect(calls).toEqual([]);
+    await expect(readProjectStatus(workspaceRoot)).resolves.toMatchObject({ contexts: [] });
+  });
+});
+
 test('captures one passing run with partial source freshness', async () => {
   await withTempWorkspace(async (workspaceRoot) => {
     const testPath = path.join(workspaceRoot, 'src', 'math.test.ts');

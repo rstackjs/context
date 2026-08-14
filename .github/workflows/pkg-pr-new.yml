@@ -30,4 +30,21 @@ jobs:
         run: pnpm build
 
       - name: Publish package preview
-        run: pnpm exec pkg-pr-new publish --pnpm --previewVersion --no-template '.'
+        shell: bash
+        run: |
+          set +e
+          output=$(pnpm exec pkg-pr-new publish --pnpm --previewVersion --no-template '.' 2>&1)
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+
+          if [ "$status" -eq 0 ]; then
+            exit 0
+          fi
+
+          if [[ "$output" == *'There is no workflow defined'* ]]; then
+            echo '::warning title=pkg.pr.new is not enabled::Grant the pkg.pr.new GitHub App access to rstackjs/context to publish preview packages.'
+            exit 0
+          fi
+
+          exit "$status"
