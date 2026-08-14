@@ -72,7 +72,14 @@ type TestCaptureResult = {
   status: ContextRunStatus;
   freshness: ContextFreshness;
   summary: Record<string, number>;
+  errors?: TestCaptureError[];
   unhandledErrors?: TestErrorRecord[];
+};
+
+type TestCaptureError = TestErrorRecord & {
+  scope: 'file' | 'run';
+  project?: string;
+  path?: string;
 };
 
 type RunRstest = (options?: RunRstestOptions) => Promise<TestRunResult>;
@@ -441,6 +448,17 @@ const captureTestSnapshot = async (
   };
 
   ensureWritten(await writeContextSnapshot(workspaceRoot, snapshot));
+  const errors: TestCaptureError[] = [
+    ...facet.files.flatMap((file) =>
+      (file.errors ?? []).map((error) => ({
+        ...error,
+        scope: 'file' as const,
+        project: file.project,
+        path: file.path,
+      })),
+    ),
+    ...facet.unhandledErrors.map((error) => ({ ...error, scope: 'run' as const })),
+  ];
   return {
     runId: run.runId,
     contextId: context.contextId,
@@ -452,8 +470,10 @@ const captureTestSnapshot = async (
       failedFiles: facet.stats.files.failed,
       tests: facet.stats.tests.total,
       failedTests: facet.stats.tests.failed,
+      errors: errors.length,
       unhandledErrors: facet.unhandledErrors.length,
     },
+    ...(errors.length === 0 ? {} : { errors }),
     ...(facet.unhandledErrors.length === 0 ? {} : { unhandledErrors: facet.unhandledErrors }),
   };
 };
@@ -515,6 +535,7 @@ const listTestResults = async (
 export { captureTestSnapshot, listTestResults };
 export type {
   TestCaptureDependencies,
+  TestCaptureError,
   TestCaptureResult,
   RelatedTestRequest,
   ResolveRelatedTests,

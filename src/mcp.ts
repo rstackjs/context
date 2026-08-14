@@ -369,8 +369,14 @@ const formatStructuredResult = (result: unknown): string => {
     }
   }
 
-  if (Array.isArray(result.unhandledErrors) && isRecord(result.unhandledErrors[0])) {
-    addDetail('firstError', result.unhandledErrors[0].message);
+  const firstError =
+    Array.isArray(result.errors) && isRecord(result.errors[0])
+      ? result.errors[0]
+      : Array.isArray(result.unhandledErrors) && isRecord(result.unhandledErrors[0])
+        ? result.unhandledErrors[0]
+        : undefined;
+  if (firstError !== undefined) {
+    addDetail('firstError', firstError.message);
   }
 
   return details.length === 0

@@ -137,6 +137,7 @@ test('captures one passing run with partial source freshness', async () => {
         failedFiles: 0,
         tests: 1,
         failedTests: 0,
+        errors: 0,
         unhandledErrors: 0,
       },
     });
@@ -998,6 +999,21 @@ test('captures file-level failures without inventing test cases', async () => {
       createDependencies(result, calls, 'file-error'),
     );
 
+    expect(capture).toMatchObject({
+      status: 'fail',
+      summary: { errors: 1 },
+      errors: [
+        {
+          scope: 'file',
+          project: 'node',
+          path: 'tests/broken.test.ts',
+          name: 'ImportError',
+          message: 'could not import setup module',
+          stack: 'import stack',
+        },
+      ],
+    });
+
     expect(
       (await readContextSnapshotById(workspaceRoot, capture.snapshotId))?.snapshot.facets.test,
     ).toMatchObject({
@@ -1068,6 +1084,14 @@ test('records unhandled Rstest errors as an error snapshot', async () => {
       status: 'error',
       freshness: { state: 'partial', changedPaths: [] },
       summary: { unhandledErrors: 1 },
+      errors: [
+        {
+          scope: 'run',
+          name: 'ConfigError',
+          message: 'configuration failed',
+          stack: 'config stack',
+        },
+      ],
       unhandledErrors: [
         {
           name: 'ConfigError',
