@@ -1,0 +1,27 @@
+catalogMode: prefer
+
+catalog:
+  '@modelcontextprotocol/sdk': '1.29.0'
+  '@rsbuild/core': '~2.1.11'
+  '@rsdoctor/agent-cli': '0.1.1'
+  '@rslib/core': '~1.0.0-beta.3'
+  '@rslint/core': '~0.8.0'
+  '@rstest/core': '~0.11.6'
+  '@rstest/coverage-istanbul': '0.11.6'
+  '@types/node': '^24.13.3'
+  pkg-pr-new: '0.0.87'
+  prettier: '3.9.6'
+  typescript: '^7.0.2'
+  zod: '4.4.3'
+
+autoInstallPeers: false
+cleanupUnusedCatalogs: true
+dedupePeers: true
+engineStrict: true
+
+minimumReleaseAge: 1440
+minimumReleaseAgeExclude:
+  - '@rsbuild/*'
+  - '@rslib/*'
+  - '@rspack/*'
+  - 'rsbuild-plugin-*'

@@ -4,12 +4,11 @@
   "description": "Rstack project context, evidence storage, and MCP runtime.",
   "homepage": "https://rstack.rs",
   "bugs": {
-    "url": "https://github.com/rstackjs/rstack-cli/issues"
+    "url": "https://github.com/rstackjs/context/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/rstackjs/rstack-cli.git",
-    "directory": "packages/context"
+    "url": "git+https://github.com/rstackjs/context.git"
   },
   "license": "MIT",
   "type": "module",
@@ -30,8 +29,13 @@
   ],
   "scripts": {
     "build": "rslib",
+    "check": "rslint --type-check . && prettier --check .",
     "dev": "rslib --watch",
-    "test": "rstest"
+    "format": "prettier --write .",
+    "lint": "rslint --type-check .",
+    "test": "rstest run",
+    "test:coverage": "rstest run --coverage",
+    "test:watch": "rstest"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "catalog:",
@@ -45,7 +49,8 @@
     "@rslib/core": "catalog:",
     "@rstest/coverage-istanbul": "catalog:",
     "@types/node": "catalog:",
-    "fast-json-stable-stringify": "catalog:",
+    "pkg-pr-new": "catalog:",
+    "prettier": "catalog:",
     "typescript": "catalog:"
   },
   "peerDependencies": {
@@ -57,8 +62,10 @@
     }
   },
   "engines": {
-    "node": ">=22.12.0"
+    "node": ">=22.12.0",
+    "pnpm": ">=11.0.0"
   },
+  "packageManager": "pnpm@11.21.0",
   "publishConfig": {
     "access": "public",
     "registry": "https://registry.npmjs.org/"
