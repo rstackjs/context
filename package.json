@@ -41,7 +41,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
     "@rsbuild/core": "2.1.11",
-    "@rsdoctor/agent-cli": "0.1.1",
+    "@rsdoctor/agent-cli": "https://pkg.pr.new/@rsdoctor/agent-cli@1903",
     "@rslint/core": "0.8.0",
     "@rstest/core": "0.11.6",
     "zod": "4.4.3"

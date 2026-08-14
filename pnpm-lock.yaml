@@ -16,8 +16,8 @@ importers:
         specifier: 2.1.11
         version: 2.1.11
       '@rsdoctor/agent-cli':
-        specifier: 0.1.1
-        version: 0.1.1
+        specifier: https://pkg.pr.new/@rsdoctor/agent-cli@1903
+        version: https://pkg.pr.new/@rsdoctor/agent-cli@1903
       '@rslint/core':
         specifier: 0.8.0
         version: 0.8.0
@@ -172,8 +172,10 @@ packages:
       core-js:
         optional: true
 
-  '@rsdoctor/agent-cli@0.1.1':
-    resolution: {integrity: sha512-5bLoaIvvrlVcDRKGQFKXf5OiQkpcoHivVxqy+93ujxcATc6quWiJ3il9rLLzEV0mP0cF3IEsFpituVzHtBy6MA==}
+  '@rsdoctor/agent-cli@https://pkg.pr.new/@rsdoctor/agent-cli@1903':
+    resolution: {integrity: sha512-k23rz020WxM9KK5Z84SoCoxxz7qMmSMlF8G2wkPasEdiJr6sce93wec/7XEQm+FjgNKrYJBTpY+onkGCMRVI2g==, tarball: https://pkg.pr.new/@rsdoctor/agent-cli@1903}
+    version: 0.0.0-preview-ba5f0a8
+    engines: {node: '>=22.18.0'}
     hasBin: true
 
   '@rslib/core@1.0.0-beta.3':
@@ -1029,7 +1031,7 @@ snapshots:
     transitivePeerDependencies:
       - '@module-federation/runtime-tools'
 
-  '@rsdoctor/agent-cli@0.1.1': {}
+  '@rsdoctor/agent-cli@https://pkg.pr.new/@rsdoctor/agent-cli@1903': {}
 
   '@rslib/core@1.0.0-beta.3(typescript@7.0.2)':
     dependencies:

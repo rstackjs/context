@@ -292,7 +292,17 @@ test('distinguishes collected empty data from an omitted artifact section', asyn
       toolName: 'build_summary',
     });
 
-    expect(collected.result).toEqual(omitted.result);
+    expect(collected.result).toMatchObject({ ok: true });
+    expect(omitted.result).toEqual({
+      ok: false,
+      error: {
+        code: 'RSDOCTOR_SECTION_UNAVAILABLE',
+        message: 'Rsdoctor artifact section "summary" is unavailable (output-mode).',
+        reason: 'output-mode',
+        section: 'summary',
+        status: 'omitted',
+      },
+    });
     expect(collected.sectionEvidence).toEqual([{ section: 'summary', status: 'collected' }]);
     expect(omitted.sectionEvidence).toEqual([
       { reason: 'output-mode', section: 'summary', status: 'omitted' },
