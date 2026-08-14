@@ -33,6 +33,7 @@
     "dev": "rslib --watch",
     "format": "prettier --write .",
     "lint": "rslint --type-check .",
+    "prepare": "pnpm build",
     "test": "rstest run",
     "test:coverage": "rstest run --coverage",
     "test:watch": "rstest"
