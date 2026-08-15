@@ -119,15 +119,19 @@ and translate the executor's own validation error.
 **(b) Document (and converge) a behavioral divergence between the published
 package and the pkg.pr.new preview build this repo's CI depends on.**
 
-`package.json` declares `"@rsdoctor/agent-cli": "0.1.1"` (`package.json:67`),
-but `pnpm-workspace.yaml` overrides that resolution to a preview build:
+`package.json` now declares the commit-pinned pkg.pr.new canary directly as
+the dependency:
 
-```yaml
-overrides:
-  '@rsdoctor/agent-cli': 'https://pkg.pr.new/@rsdoctor/agent-cli@1903'
+```json
+"@rsdoctor/agent-cli": "https://pkg.pr.new/@rsdoctor/agent-cli@ba5f0a83"
 ```
 
-The two builds disagree on how an _omitted_ artifact section (one whose
+so installs and CI resolve exactly the build the tests certify, and the
+resolution propagates to downstream consumers (a `pnpm-workspace.yaml`
+override would not). The canary is the head of open PR
+web-infra-dev/rsdoctor#1903 (`codex/rsdoctor-rstack-artifact-contract`,
+mergeable, checks green). The published `0.1.1` release and that canary
+disagree on how an _omitted_ artifact section (one whose
 `metadata.summary.status === 'omitted'`, e.g. because the Rsdoctor run used an
 output mode that skips that section) is reported for output-mode-omitted
 data. Published `@rsdoctor/agent-cli@0.1.1` returns `{ ok: true, data: null
@@ -138,10 +142,11 @@ data from an omitted artifact section", asserting the `RSDOCTOR_SECTION_UNAVAILA
 shape), only passes against the preview build's new semantics — this
 package's CI cannot ship against the published `0.1.1` release as-is.
 
-**Request:** cut a release of `@rsdoctor/agent-cli` that includes the
-`RSDOCTOR_SECTION_UNAVAILABLE` semantics from the pkg.pr.new preview (PR/build
-`1903`), and once it ships, drop the `pnpm-workspace.yaml` override and bump
-`package.json`'s `@rsdoctor/agent-cli` dependency to that release.
+**Request:** merge web-infra-dev/rsdoctor#1903 and cut a release of
+`@rsdoctor/agent-cli` that includes the `RSDOCTOR_SECTION_UNAVAILABLE`
+semantics; once it ships, swap `package.json`'s canary URL for that release
+version. Until then the commit-pinned canary above is the supported
+resolution; the canary URL depends on pkg.pr.new artifact retention.
 
 ## Cross-repo follow-ups (rstack-cli coordination)
 

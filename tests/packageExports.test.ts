@@ -29,7 +29,12 @@ test('publishes focused Context entry points without a Rstack dependency', async
     './rstack',
     './rstest',
   ]);
-  expect(packageJson.dependencies?.['@rsdoctor/agent-cli']).toBe('0.1.1');
+  // Commit-pinned canary of web-infra-dev/rsdoctor#1903: the dependency itself carries the
+  // resolution so downstream installs get the build these tests certify (overrides do not
+  // propagate). Swap for a release version once the PR merges and ships.
+  expect(packageJson.dependencies?.['@rsdoctor/agent-cli']).toBe(
+    'https://pkg.pr.new/@rsdoctor/agent-cli@ba5f0a83',
+  );
   for (const section of [
     packageJson.dependencies,
     packageJson.devDependencies,
