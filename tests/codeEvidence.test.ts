@@ -533,7 +533,9 @@ test('selects lint provenance only from snapshots that captured the exact source
       diagnostics: { total: 0, items: [] },
       provenance: { lint: { snapshotId: 'snap_relevant_lint' } },
     });
-    await expect(readCodeEvidence(workspaceRoot, { path: 'src/missing.ts' })).resolves.toMatchObject({
+    await expect(
+      readCodeEvidence(workspaceRoot, { path: 'src/missing.ts' }),
+    ).resolves.toMatchObject({
       diagnostics: { total: 0, items: [] },
       provenance: {},
     });

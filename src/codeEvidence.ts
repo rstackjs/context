@@ -108,10 +108,7 @@ const packageContainsPath = (packageRoot: string, sourcePath: string): boolean =
   );
 };
 
-const lintSnapshotCapturedPath = (
-  stored: StoredContextSnapshot,
-  sourcePath: string,
-): boolean =>
+const lintSnapshotCapturedPath = (stored: StoredContextSnapshot, sourcePath: string): boolean =>
   stored.snapshot.source?.inputs?.some((input) => input.path === sourcePath) === true ||
   diagnosticsFromStoredSnapshot(stored).some((diagnostic) => diagnostic.path === sourcePath);
 
