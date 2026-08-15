@@ -54,6 +54,17 @@ const summarizeBuildFacet = (value: unknown) => {
     return undefined;
   }
 
+  const truncated =
+    isRecordObject(value.truncated) &&
+    typeof value.truncated.assets === 'number' &&
+    Number.isSafeInteger(value.truncated.assets) &&
+    value.truncated.assets >= 0 &&
+    typeof value.truncated.chunks === 'number' &&
+    Number.isSafeInteger(value.truncated.chunks) &&
+    value.truncated.chunks >= 0
+      ? { assets: value.truncated.assets, chunks: value.truncated.chunks }
+      : undefined;
+
   return {
     command: value.command,
     ...(typeof value.mode === 'string' ? { mode: value.mode } : {}),
@@ -64,6 +75,15 @@ const summarizeBuildFacet = (value: unknown) => {
     hasWarnings: value.hasWarnings,
     assets: value.assets.length,
     chunks: value.chunks.length,
+    ...(truncated === undefined
+      ? {}
+      : {
+          total: {
+            assets: value.assets.length + truncated.assets,
+            chunks: value.chunks.length + truncated.chunks,
+          },
+          truncated,
+        }),
   };
 };
 
