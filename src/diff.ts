@@ -40,6 +40,8 @@ type SnapshotTestUnhandledError = {
 type SnapshotDiffItem =
   SnapshotDiagnostic | SnapshotTestFileError | SnapshotTestUnhandledError | TestCaseRecord;
 
+type SnapshotTestResult = SnapshotTestFileError | SnapshotTestUnhandledError | TestCaseRecord;
+
 type SnapshotDiffResult =
   | {
       compatible: false;
@@ -66,18 +68,14 @@ const diagnosticIdentity = (diagnostic: SnapshotDiagnostic): string =>
     diagnostic.column,
   ]);
 
-const testIdentity = (
-  result: SnapshotTestFileError | SnapshotTestUnhandledError | TestCaseRecord,
-): string =>
+const testIdentity = (result: SnapshotTestResult): string =>
   'kind' in result
     ? result.kind === 'file-error'
       ? JSON.stringify([result.project, result.path, result.kind, result.error.name])
       : JSON.stringify([result.kind, result.error.name])
     : JSON.stringify([result.project, result.path, result.parentNames ?? [], result.name]);
 
-const testResults = (
-  facet: TestFacet,
-): Array<SnapshotTestFileError | SnapshotTestUnhandledError | TestCaseRecord> => [
+const testResults = (facet: TestFacet): SnapshotTestResult[] => [
   ...facet.files.flatMap((file) => [
     ...(file.errors ?? []).map((error) => ({
       kind: 'file-error' as const,
@@ -90,10 +88,18 @@ const testResults = (
   ...facet.unhandledErrors.map((error) => ({ kind: 'unhandled-error' as const, error })),
 ];
 
+const testResultsEqual = (left: SnapshotTestResult, right: SnapshotTestResult): boolean => {
+  if ('kind' in left || 'kind' in right) return isDeepStrictEqual(left, right);
+  const { durationMs: _leftDurationMs, ...leftResult } = left;
+  const { durationMs: _rightDurationMs, ...rightResult } = right;
+  return isDeepStrictEqual(leftResult, rightResult);
+};
+
 const diffItems = <T extends SnapshotDiffItem>(
   leftItems: T[],
   rightItems: T[],
   identity: (item: T) => string,
+  equal: (left: T, right: T) => boolean = isDeepStrictEqual,
 ): Pick<Extract<SnapshotDiffResult, { compatible: true }>, 'added' | 'removed' | 'changed'> => {
   const leftByIdentity = new Map<string, T[]>();
   const rightByIdentity = new Map<string, T[]>();
@@ -113,7 +119,7 @@ const diffItems = <T extends SnapshotDiffItem>(
   for (const itemIdentity of identities) {
     const after = [...(rightByIdentity.get(itemIdentity) ?? [])];
     const before = (leftByIdentity.get(itemIdentity) ?? []).filter((item) => {
-      const exactIndex = after.findIndex((candidate) => isDeepStrictEqual(item, candidate));
+      const exactIndex = after.findIndex((candidate) => equal(item, candidate));
       if (exactIndex === -1) return true;
       after.splice(exactIndex, 1);
       return false;
@@ -180,6 +186,7 @@ const diffStoredContextSnapshots = (
           testResults(leftFacet as TestFacet),
           testResults(rightFacet as TestFacet),
           testIdentity,
+          testResultsEqual,
         );
 
   return {

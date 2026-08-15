@@ -585,7 +585,15 @@ const listTestResults = async (
         (query.status === undefined || item.status === query.status),
     )
     .sort(compareTestCases);
-  const offset = decodeCursor(query.cursor, 'Invalid test result cursor.');
+  const cursorScope = {
+    surface: 'test_results',
+    selectedSnapshotId: stored.snapshot.snapshotId,
+    snapshotId: query.snapshotId,
+    project: query.project,
+    pathPrefix: query.pathPrefix,
+    status: query.status,
+  };
+  const offset = decodeCursor(query.cursor, 'Invalid test result cursor.', cursorScope);
   const limit = query.limit ?? 50;
   if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
     throw new Error('Test result limit must be an integer from 1 to 200.');
@@ -601,7 +609,7 @@ const listTestResults = async (
     freshness: await assessSnapshotFreshness(workspaceRoot, stored.snapshot),
     total: items.length,
     items: pageItems,
-    ...(nextOffset < items.length ? { nextCursor: encodeCursor(nextOffset) } : {}),
+    ...(nextOffset < items.length ? { nextCursor: encodeCursor(nextOffset, cursorScope) } : {}),
   };
 };
 

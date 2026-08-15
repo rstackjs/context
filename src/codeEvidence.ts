@@ -108,6 +108,13 @@ const packageContainsPath = (packageRoot: string, sourcePath: string): boolean =
   );
 };
 
+const lintSnapshotCapturedPath = (
+  stored: StoredContextSnapshot,
+  sourcePath: string,
+): boolean =>
+  stored.snapshot.source?.inputs?.some((input) => input.path === sourcePath) === true ||
+  diagnosticsFromStoredSnapshot(stored).some((diagnostic) => diagnostic.path === sourcePath);
+
 const selectSnapshot = async (
   workspaceRoot: string,
   producer: 'rstest' | 'rslint',
@@ -124,12 +131,16 @@ const selectSnapshot = async (
         `Selected ${producer === 'rstest' ? 'Rstest' : 'Rslint'} snapshot package root does not contain the source path.`,
       );
     }
+    if (producer === 'rslint' && !lintSnapshotCapturedPath(selected, sourcePath)) {
+      throw new Error('Selected Rslint snapshot did not capture the source path.');
+    }
     return selected;
   }
   return (await readContextSnapshots(workspaceRoot, { producer })).find(
-    ({ context, snapshot }) =>
-      packageContainsPath(context.packageRoot, sourcePath) &&
-      snapshot.facets[producer === 'rstest' ? 'test' : 'lint'] !== undefined,
+    (stored) =>
+      packageContainsPath(stored.context.packageRoot, sourcePath) &&
+      stored.snapshot.facets[producer === 'rstest' ? 'test' : 'lint'] !== undefined &&
+      (producer !== 'rslint' || lintSnapshotCapturedPath(stored, sourcePath)),
   );
 };
 

@@ -286,6 +286,11 @@ const captureLintSnapshot = async (
         await engine.close();
       }
     });
+    if (results.length === 0) {
+      throw new Error(
+        'Rslint reported no files. Verify that the selected Rstack configuration defines lint with define.lint and that the requested patterns match lint inputs.',
+      );
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const file: LintFileRecord = {

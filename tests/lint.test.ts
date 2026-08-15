@@ -700,6 +700,41 @@ test('records unreadable lint inputs as degraded completeness instead of throwin
   });
 });
 
+test('records zero reported lint files as an actionable partial error instead of a passing capture', async () => {
+  await withTempWorkspace('rstack-context-lint-', async (workspaceRoot) => {
+    await writeFile(path.join(workspaceRoot, 'a.ts'), 'const a = 1;\n');
+
+    await expect(
+      captureLintSnapshot(workspaceRoot, { mode: 'files' }, createRslint, adapter),
+    ).rejects.toThrow('Rslint reported no files');
+
+    const [stored] = await readContextSnapshots(workspaceRoot, { producer: 'rslint' });
+    expect(stored?.snapshot).toMatchObject({
+      status: 'error',
+      completeness: { lint: 'partial' },
+      facets: {
+        lint: {
+          producer: 'rslint',
+          mode: 'files',
+          files: [
+            {
+              errorCount: 1,
+              messages: [
+                {
+                  severity: 2,
+                  message: expect.stringContaining('define.lint'),
+                },
+              ],
+            },
+          ],
+          totals: { files: 1, errors: 1 },
+        },
+      },
+      source: { inputs: [], inputCompleteness: 'partial' },
+    });
+  });
+});
+
 test('reports a missing lint config adapter before writing any run manifest', async () => {
   await withTempWorkspace('rstack-context-lint-', async (workspaceRoot) => {
     await expect(captureLintSnapshot(workspaceRoot, { mode: 'files' })).rejects.toThrow(

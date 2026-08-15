@@ -382,6 +382,111 @@ test('preserves duplicate lint diagnostics when only one occurrence is removed',
   });
 });
 
+test('ignores test observation timing jitter across repeat captures', () => {
+  const testCase = {
+    project: 'unit',
+    path: 'stable.test.ts',
+    parentNames: ['stable suite'],
+    name: 'stays stable',
+    status: 'pass' as const,
+    meta: { owner: 'context' },
+  };
+  const leftFacet = emptyTestFacet();
+  leftFacet.durationMs = 1;
+  leftFacet.files = [
+    {
+      project: 'unit',
+      path: 'stable.test.ts',
+      status: 'pass',
+      durationMs: 0,
+      tests: [{ ...testCase, durationMs: 0 }],
+    },
+  ];
+  const rightFacet = emptyTestFacet();
+  rightFacet.durationMs = 4;
+  rightFacet.files = [
+    {
+      project: 'unit',
+      path: 'stable.test.ts',
+      status: 'pass',
+      durationMs: 3,
+      tests: [{ ...testCase, durationMs: 3 }],
+    },
+  ];
+
+  expect(
+    compare(
+      storedSnapshot({ snapshotId: 'snap_left', producer: 'rstest', facet: leftFacet }),
+      storedSnapshot({ snapshotId: 'snap_right', producer: 'rstest', facet: rightFacet }),
+      'tests',
+    ),
+  ).toMatchObject({
+    compatible: true,
+    added: [],
+    removed: [],
+    changed: [],
+    summary: { added: 0, removed: 0, changed: 0 },
+  });
+});
+
+test('reports test metadata changes with the original timing context', () => {
+  const leftFacet = emptyTestFacet();
+  leftFacet.files = [
+    {
+      project: 'unit',
+      path: 'metadata.test.ts',
+      status: 'pass',
+      tests: [
+        {
+          project: 'unit',
+          path: 'metadata.test.ts',
+          name: 'tracks ownership',
+          status: 'pass',
+          durationMs: 0,
+          meta: { owner: 'before' },
+        },
+      ],
+    },
+  ];
+  const rightFacet = emptyTestFacet();
+  rightFacet.files = [
+    {
+      project: 'unit',
+      path: 'metadata.test.ts',
+      status: 'pass',
+      tests: [
+        {
+          project: 'unit',
+          path: 'metadata.test.ts',
+          name: 'tracks ownership',
+          status: 'pass',
+          durationMs: 3,
+          meta: { owner: 'after' },
+        },
+      ],
+    },
+  ];
+
+  const result = compare(
+    storedSnapshot({ snapshotId: 'snap_left', producer: 'rstest', facet: leftFacet }),
+    storedSnapshot({ snapshotId: 'snap_right', producer: 'rstest', facet: rightFacet }),
+    'tests',
+  );
+
+  expect(result).toMatchObject({
+    compatible: true,
+    added: [],
+    removed: [],
+    changed: [
+      {
+        before: { durationMs: 0, meta: { owner: 'before' } },
+        after: { durationMs: 3, meta: { owner: 'after' } },
+      },
+    ],
+    summary: { added: 0, removed: 0, changed: 1 },
+  });
+});
+
 test('diffs project-qualified test results and reports execution changes', () => {
   const leftFacet = emptyTestFacet();
   leftFacet.files = [

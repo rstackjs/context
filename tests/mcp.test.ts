@@ -85,6 +85,66 @@ test('reports an empty checkout without requiring optional producers', async () 
   });
 });
 
+test('rejects snapshot cursors reused with different filters', async () => {
+  await withClient(async (client, workspaceRoot) => {
+    const context = { contextId: 'ctx_web', packageRoot: '.', product: 'application' } as const;
+    await writeContextRunManifest(workspaceRoot, {
+      schemaVersion: 1,
+      runId: 'run_lint',
+      producer: 'rslint',
+      command: 'lint',
+      startedAt: '2026-08-14T03:00:00.000Z',
+      contexts: [context],
+    });
+    await writeContextSnapshot(workspaceRoot, {
+      schemaVersion: 1,
+      snapshotId: 'snap_lint',
+      runId: 'run_lint',
+      contextId: context.contextId,
+      sequence: 1,
+      observedAt: '2026-08-14T03:00:01.000Z',
+      status: 'pass',
+      completeness: { lint: 'complete' },
+      facets: {},
+    });
+    await writeContextRunManifest(workspaceRoot, {
+      schemaVersion: 1,
+      runId: 'run_test',
+      producer: 'rstest',
+      command: 'test',
+      startedAt: '2026-08-14T04:00:00.000Z',
+      contexts: [context],
+    });
+    await writeContextSnapshot(workspaceRoot, {
+      schemaVersion: 1,
+      snapshotId: 'snap_test',
+      runId: 'run_test',
+      contextId: context.contextId,
+      sequence: 1,
+      observedAt: '2026-08-14T04:00:01.000Z',
+      status: 'pass',
+      completeness: { test: 'complete' },
+      facets: {},
+    });
+
+    const first = await client.callTool({
+      name: 'snapshot_list',
+      arguments: { limit: 1 },
+    });
+    const cursor = (first.structuredContent as { nextCursor?: string }).nextCursor;
+    expect(cursor).toEqual(expect.any(String));
+
+    const changedFilter = await client.callTool({
+      name: 'snapshot_list',
+      arguments: { producer: 'rslint', limit: 1, cursor },
+    });
+    expect(changedFilter.isError).toBe(true);
+    expect(changedFilter.content).toEqual([
+      { type: 'text', text: expect.stringContaining('Invalid snapshot cursor') },
+    ]);
+  });
+});
+
 test('surfaces requested execution availability in test capture text', async () => {
   await withClient(
     async (client) => {

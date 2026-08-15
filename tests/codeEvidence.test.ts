@@ -34,6 +34,7 @@ const writeSnapshot = async (
     context?: ContextDescriptor;
     facets: ContextSnapshot['facets'];
     completeness: ContextSnapshot['completeness'];
+    source?: ContextSnapshot['source'];
   },
 ): Promise<void> => {
   const context =
@@ -69,6 +70,7 @@ const writeSnapshot = async (
       status: 'pass',
       completeness: options.completeness,
       facets: options.facets,
+      ...(options.source === undefined ? {} : { source: options.source }),
     }),
   ).toMatchObject({ written: true });
 };
@@ -499,6 +501,48 @@ test('bounds exact-path diagnostics to two hundred records', async () => {
     await expect(readCodeEvidence(workspaceRoot, { path: 'src/noisy.ts' })).resolves.toMatchObject({
       diagnostics: { total: 205, returned: 200, truncated: true },
     });
+  });
+});
+
+test('selects lint provenance only from snapshots that captured the exact source path', async () => {
+  await withTempWorkspace('rstack-code-evidence-', async (workspaceRoot) => {
+    const relevant = lintFacet('src/value.ts');
+    relevant.files[0].messages = [];
+    relevant.files[0].warningCount = 0;
+    relevant.totals.warnings = 0;
+    await writeSnapshot(workspaceRoot, {
+      producer: 'rslint',
+      snapshotId: 'snap_relevant_lint',
+      observedAt: '2026-08-13T01:00:00.000Z',
+      facets: { lint: relevant as unknown as JsonValue },
+      completeness: { lint: 'complete' },
+      source: {
+        inputs: [{ path: 'src/value.ts', digest: 'a'.repeat(64) }],
+        inputCompleteness: 'complete',
+      },
+    });
+    await writeSnapshot(workspaceRoot, {
+      producer: 'rslint',
+      snapshotId: 'snap_unrelated_lint',
+      observedAt: '2026-08-13T02:00:00.000Z',
+      facets: { lint: lintFacet('src/other.ts') as unknown as JsonValue },
+      completeness: { lint: 'complete' },
+    });
+
+    await expect(readCodeEvidence(workspaceRoot, { path: 'src/value.ts' })).resolves.toMatchObject({
+      diagnostics: { total: 0, items: [] },
+      provenance: { lint: { snapshotId: 'snap_relevant_lint' } },
+    });
+    await expect(readCodeEvidence(workspaceRoot, { path: 'src/missing.ts' })).resolves.toMatchObject({
+      diagnostics: { total: 0, items: [] },
+      provenance: {},
+    });
+    await expect(
+      readCodeEvidence(workspaceRoot, {
+        path: 'src/value.ts',
+        lintSnapshotId: 'snap_unrelated_lint',
+      }),
+    ).rejects.toThrow('Selected Rslint snapshot did not capture the source path.');
   });
 });
 

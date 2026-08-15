@@ -526,7 +526,12 @@ const listSnapshots = async (workspaceRoot: string, input: z.infer<typeof snapsh
     producer: input.producer,
     contextId: input.contextId,
   });
-  const offset = decodeCursor(input.cursor, 'Invalid snapshot cursor.');
+  const cursorScope = {
+    surface: 'snapshot_list',
+    producer: input.producer,
+    contextId: input.contextId,
+  };
+  const offset = decodeCursor(input.cursor, 'Invalid snapshot cursor.', cursorScope);
   const selected = snapshots.slice(offset, offset + input.limit);
   const items = await Promise.all(
     selected.map(async ({ run, context, snapshot }) => {
@@ -557,7 +562,7 @@ const listSnapshots = async (workspaceRoot: string, input: z.infer<typeof snapsh
   return {
     total: snapshots.length,
     items,
-    ...(nextOffset < snapshots.length ? { nextCursor: encodeCursor(nextOffset) } : {}),
+    ...(nextOffset < snapshots.length ? { nextCursor: encodeCursor(nextOffset, cursorScope) } : {}),
   };
 };
 

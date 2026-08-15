@@ -1347,8 +1347,17 @@ test('pages project-qualified results in deterministic identity order', async ()
           status: 'pass',
         },
       ],
-      nextCursor: 'Mg',
+      nextCursor: expect.any(String),
     });
+    await expect(
+      listTestResults(workspaceRoot, {
+        snapshotId: capture.snapshotId,
+        pathPrefix: 'tests/',
+        status: 'pass',
+        limit: 2,
+        cursor: first.nextCursor,
+      }),
+    ).rejects.toThrow('Invalid test result cursor');
     await expect(
       listTestResults(workspaceRoot, {
         snapshotId: capture.snapshotId,
