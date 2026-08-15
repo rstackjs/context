@@ -20,6 +20,7 @@ import {
   traceModuleImpact,
 } from './queries.ts';
 import { validateLintFacet, validateTestFacet } from './records.ts';
+import type { ContextSnapshot } from './model.ts';
 import { analyzeRsdoctorArtifact, listRsdoctorToolNames } from './rsdoctor.ts';
 import { resolveRsdoctorReport } from './report.ts';
 import { assessSnapshotFreshness } from './source.ts';
@@ -90,14 +91,29 @@ const summarizeBuildFacet = (value: unknown) => {
 const renderProjectStatus = (status: Awaited<ReturnType<typeof readProjectStatus>>): string =>
   `Rstack project status: ${status.contexts.length} recorded context ${status.contexts.length === 1 ? 'identity' : 'identities'} (${status.contexts.filter(({ state }) => state === 'ready').length} ready, ${status.contexts.filter(({ state }) => state === 'pending').length} pending); ${status.issues.length} context-store/read issue${status.issues.length === 1 ? '' : 's'}. See structuredContent for compact selection details.`;
 
+const summarizeProjectSnapshot = (snapshot: ContextSnapshot) => {
+  const build = summarizeBuildFacet(snapshot.facets.build);
+  const lint = validateLintFacet(snapshot.facets.lint);
+  const test = validateTestFacet(snapshot.facets.test);
+  return {
+    snapshotId: snapshot.snapshotId,
+    observedAt: snapshot.observedAt,
+    status: snapshot.status,
+    completeness: snapshot.completeness,
+    facets: Object.keys(snapshot.facets).sort(),
+    summary: {
+      ...(build === undefined ? {} : { build }),
+      ...(lint === undefined ? {} : { lint: lint.totals }),
+      ...(test === undefined ? {} : { test: { stats: test.stats, durationMs: test.durationMs } }),
+    },
+  };
+};
+
 const summarizeProjectStatus = (status: Awaited<ReturnType<typeof readProjectStatus>>) => ({
   schemaVersion: status.schemaVersion,
   workspaceId: status.workspaceId,
   contexts: status.contexts.map(
-    ({ runId, producer, context, state, latestSnapshot, freshness }) => {
-      const build = summarizeBuildFacet(latestSnapshot?.facets.build);
-      const lint = validateLintFacet(latestSnapshot?.facets.lint);
-      const test = validateTestFacet(latestSnapshot?.facets.test);
+    ({ runId, producer, context, state, latestSnapshot, latestAttempt, freshness }) => {
       return {
         runId,
         producer,
@@ -106,22 +122,12 @@ const summarizeProjectStatus = (status: Awaited<ReturnType<typeof readProjectSta
         ...(latestSnapshot === undefined
           ? {}
           : {
-              latestSnapshot: {
-                snapshotId: latestSnapshot.snapshotId,
-                observedAt: latestSnapshot.observedAt,
-                status: latestSnapshot.status,
-                completeness: latestSnapshot.completeness,
-                facets: Object.keys(latestSnapshot.facets).sort(),
-                summary: {
-                  ...(build === undefined ? {} : { build }),
-                  ...(lint === undefined ? {} : { lint: lint.totals }),
-                  ...(test === undefined
-                    ? {}
-                    : { test: { stats: test.stats, durationMs: test.durationMs } }),
-                },
-              },
+              latestSnapshot: summarizeProjectSnapshot(latestSnapshot),
               freshness,
             }),
+        ...(latestAttempt === undefined
+          ? {}
+          : { latestAttempt: summarizeProjectSnapshot(latestAttempt) }),
       };
     },
   ),

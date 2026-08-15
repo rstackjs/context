@@ -113,6 +113,70 @@ test('keeps the newest completed snapshot when a later run recorded none', async
   });
 });
 
+test('keeps complete status evidence while exposing a newer incomplete attempt', async () => {
+  await withTempWorkspace('rstack-context-status-', async (workspaceRoot) => {
+    const context = {
+      contextId: 'ctx_test',
+      packageRoot: '.',
+      product: 'development',
+      environment: 'test',
+    } as const;
+    const completeRun = createRun('run_complete', 'rstest', '2026-08-12T04:00:00.000Z', context);
+    const errorRun = createRun('run_error', 'rstest', '2026-08-12T05:00:00.000Z', context);
+    const completeSnapshot = {
+      schemaVersion: contextStoreSchemaVersion,
+      snapshotId: 'snap_complete',
+      runId: completeRun.runId,
+      contextId: context.contextId,
+      sequence: 0,
+      observedAt: '2026-08-12T04:00:01.000Z',
+      status: 'pass',
+      completeness: { test: 'complete' },
+      facets: { summary: { tests: 1, failedTests: 0 } },
+    } satisfies ContextSnapshot;
+    const errorSnapshot = {
+      ...completeSnapshot,
+      snapshotId: 'snap_error',
+      runId: errorRun.runId,
+      observedAt: '2026-08-12T05:00:01.000Z',
+      status: 'error',
+      completeness: { test: 'partial', source: 'partial' },
+      facets: { summary: { tests: 1, failedTests: 0, errors: 1 } },
+      source: {
+        inputs: [],
+        inputCompleteness: 'partial',
+        unreadableInputs: ['src/missing.ts'],
+      },
+    } satisfies ContextSnapshot;
+
+    expect(await writeContextRunManifest(workspaceRoot, completeRun)).toMatchObject({
+      written: true,
+    });
+    expect(await writeContextSnapshot(workspaceRoot, completeSnapshot)).toMatchObject({
+      written: true,
+    });
+    expect(await writeContextRunManifest(workspaceRoot, errorRun)).toMatchObject({ written: true });
+    expect(await writeContextSnapshot(workspaceRoot, errorSnapshot)).toMatchObject({
+      written: true,
+    });
+
+    await expect(readProjectStatus(workspaceRoot)).resolves.toMatchObject({
+      contexts: [
+        {
+          runId: errorRun.runId,
+          producer: 'rstest',
+          context,
+          state: 'ready',
+          latestSnapshot: completeSnapshot,
+          latestAttempt: errorSnapshot,
+          freshness: { state: 'unknown', changedPaths: [] },
+        },
+      ],
+      issues: [],
+    });
+  });
+});
+
 test('projects only the latest run for each context in deterministic order', async () => {
   await withTempWorkspace('rstack-context-status-', async (workspaceRoot) => {
     await mkdir(path.join(workspaceRoot, 'packages', 'app'), {

@@ -281,6 +281,7 @@ type ProjectContextStatus = {
   context: ContextDescriptor;
   state: 'ready' | 'pending';
   latestSnapshot?: ContextSnapshot;
+  latestAttempt?: ContextSnapshot;
   freshness?: ContextFreshness;
 };
 

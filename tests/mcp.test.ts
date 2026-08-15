@@ -498,3 +498,90 @@ test('keeps project status compact while preserving build selection evidence', a
     expect(JSON.stringify(result.structuredContent)).not.toContain('assets/app.js');
   });
 });
+
+test('keeps complete project status while summarizing a newer failed attempt', async () => {
+  await withClient(async (client, workspaceRoot) => {
+    const context = {
+      contextId: 'ctx_test',
+      packageRoot: '.',
+      product: 'development',
+      environment: 'test',
+    } as const;
+    const completeRun: Parameters<typeof writeContextRunManifest>[1] = {
+      schemaVersion: 1,
+      runId: 'run_complete',
+      producer: 'rstest',
+      command: 'test',
+      startedAt: '2026-08-14T03:00:00.000Z',
+      contexts: [context],
+    };
+    const errorRun: Parameters<typeof writeContextRunManifest>[1] = {
+      ...completeRun,
+      runId: 'run_error',
+      startedAt: '2026-08-14T04:00:00.000Z',
+    };
+    expect(await writeContextRunManifest(workspaceRoot, completeRun)).toMatchObject({
+      written: true,
+    });
+    expect(
+      await writeContextSnapshot(workspaceRoot, {
+        schemaVersion: 1,
+        snapshotId: 'snap_complete',
+        runId: completeRun.runId,
+        contextId: context.contextId,
+        sequence: 0,
+        observedAt: '2026-08-14T03:00:01.000Z',
+        status: 'pass',
+        completeness: { test: 'complete' },
+        facets: { summary: { tests: 1, failedTests: 0 } },
+      }),
+    ).toMatchObject({ written: true });
+    expect(await writeContextRunManifest(workspaceRoot, errorRun)).toMatchObject({ written: true });
+    expect(
+      await writeContextSnapshot(workspaceRoot, {
+        schemaVersion: 1,
+        snapshotId: 'snap_error',
+        runId: errorRun.runId,
+        contextId: context.contextId,
+        sequence: 0,
+        observedAt: '2026-08-14T04:00:01.000Z',
+        status: 'error',
+        completeness: { test: 'partial', source: 'partial' },
+        facets: { summary: { tests: 1, failedTests: 0, errors: 1 } },
+        source: {
+          inputs: [],
+          inputCompleteness: 'partial',
+          unreadableInputs: ['src/missing.ts'],
+        },
+      }),
+    ).toMatchObject({ written: true });
+
+    await expect(client.callTool({ name: 'project_status', arguments: {} })).resolves.toMatchObject(
+      {
+        structuredContent: {
+          contexts: [
+            {
+              runId: errorRun.runId,
+              producer: 'rstest',
+              context,
+              state: 'ready',
+              latestSnapshot: {
+                snapshotId: 'snap_complete',
+                status: 'pass',
+                completeness: { test: 'complete' },
+                facets: ['summary'],
+              },
+              latestAttempt: {
+                snapshotId: 'snap_error',
+                status: 'error',
+                completeness: { test: 'partial', source: 'partial' },
+                facets: ['summary'],
+              },
+            },
+          ],
+          issues: [],
+        },
+      },
+    );
+  });
+});

@@ -48,6 +48,9 @@ const newerObservation = (
     ? candidate
     : current;
 
+const isCompleteSuccessfulObservation = ({ snapshot }: SnapshotObservation): boolean =>
+  snapshot.status === 'pass' && Object.values(snapshot.completeness).includes('complete');
+
 const readProjectStatus = async (workspaceRoot: string): Promise<ProjectStatus> => {
   const workspace = await readContextWorkspaceStatus(workspaceRoot);
   const workspacePath = await realpath(workspaceRoot);
@@ -57,16 +60,25 @@ const readProjectStatus = async (workspaceRoot: string): Promise<ProjectStatus> 
     (typeof workspace.runs)[number]['contexts'][number] & {
       run: (typeof workspace.runs)[number]['run'];
       observation?: SnapshotObservation;
+      latestAttempt?: SnapshotObservation;
     }
   >();
 
   for (const { run, contexts } of workspace.runs) {
     for (const contextStatus of contexts) {
       const current = currentByContextId.get(contextStatus.context.contextId);
-      const observation =
+      const candidate =
         contextStatus.latestSnapshot === undefined
+          ? undefined
+          : { run, snapshot: contextStatus.latestSnapshot };
+      const observation =
+        candidate === undefined || !isCompleteSuccessfulObservation(candidate)
           ? current?.observation
-          : newerObservation(current?.observation, { run, snapshot: contextStatus.latestSnapshot });
+          : newerObservation(current?.observation, candidate);
+      const latestAttempt =
+        candidate === undefined
+          ? current?.latestAttempt
+          : newerObservation(current?.latestAttempt, candidate);
       const newest =
         current === undefined || isNewerRun(current.run, run)
           ? { context: contextStatus.context, run }
@@ -74,25 +86,35 @@ const readProjectStatus = async (workspaceRoot: string): Promise<ProjectStatus> 
       currentByContextId.set(contextStatus.context.contextId, {
         ...newest,
         ...(observation === undefined ? {} : { observation }),
+        ...(latestAttempt === undefined ? {} : { latestAttempt }),
       });
     }
   }
 
   const contexts = (
     await Promise.all(
-      [...currentByContextId.values()].map(async ({ run, context, observation }) => ({
-        runId: run.runId,
-        producer: run.producer,
-        context,
-        state: observation === undefined ? ('pending' as const) : ('ready' as const),
-        ...(observation === undefined
-          ? {}
-          : {
-              latestSnapshot: observation.snapshot,
-              freshness: await assessSnapshotFreshness(workspaceRoot, observation.snapshot),
-            }),
-        startedAt: run.startedAt,
-      })),
+      [...currentByContextId.values()].map(
+        async ({ run, context, observation, latestAttempt }) => ({
+          runId: run.runId,
+          producer: run.producer,
+          context,
+          state:
+            observation === undefined && latestAttempt === undefined
+              ? ('pending' as const)
+              : ('ready' as const),
+          ...(observation === undefined
+            ? {}
+            : {
+                latestSnapshot: observation.snapshot,
+                freshness: await assessSnapshotFreshness(workspaceRoot, observation.snapshot),
+              }),
+          ...(latestAttempt === undefined ||
+          latestAttempt.snapshot.snapshotId === observation?.snapshot.snapshotId
+            ? {}
+            : { latestAttempt: latestAttempt.snapshot }),
+          startedAt: run.startedAt,
+        }),
+      ),
     )
   )
     .sort(compareProjectContexts)
