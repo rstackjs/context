@@ -8,3 +8,10 @@ minimumReleaseAgeExclude:
   - '@rslib/*'
   - '@rspack/*'
   - 'rsbuild-plugin-*'
+
+# Root-only validation override, deliberately NOT part of the packed manifest: published
+# previews must carry ordinary semver dependencies because blockExoticSubdeps consumers
+# reject URL-resolved subdependencies (rstack-cli context-plugin-boundary design, "Preview
+# dependency policy"). Commit-pinned to the head of web-infra-dev/rsdoctor#1903.
+overrides:
+  '@rsdoctor/agent-cli': 'https://pkg.pr.new/@rsdoctor/agent-cli@ba5f0a83'

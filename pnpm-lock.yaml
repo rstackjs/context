@@ -5,6 +5,9 @@ settings:
   dedupePeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  '@rsdoctor/agent-cli': https://pkg.pr.new/@rsdoctor/agent-cli@ba5f0a83
+
 importers:
 
   .:

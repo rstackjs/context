@@ -119,19 +119,22 @@ and translate the executor's own validation error.
 **(b) Document (and converge) a behavioral divergence between the published
 package and the pkg.pr.new preview build this repo's CI depends on.**
 
-`package.json` now declares the commit-pinned pkg.pr.new canary directly as
-the dependency:
+`package.json` declares the supported semver dependency (`0.1.1`) while this
+repo's own validation resolves the commit-pinned pkg.pr.new canary through a
+root-only override in `pnpm-workspace.yaml`:
 
-```json
-"@rsdoctor/agent-cli": "https://pkg.pr.new/@rsdoctor/agent-cli@ba5f0a83"
+```yaml
+overrides:
+  '@rsdoctor/agent-cli': 'https://pkg.pr.new/@rsdoctor/agent-cli@ba5f0a83'
 ```
 
-so installs and CI resolve exactly the build the tests certify, and the
-resolution propagates to downstream consumers (a `pnpm-workspace.yaml`
-override would not). The canary is the head of open PR
-web-infra-dev/rsdoctor#1903 (`codex/rsdoctor-rstack-artifact-contract`,
-mergeable, checks green). The published `0.1.1` release and that canary
-disagree on how an _omitted_ artifact section (one whose
+The split is deliberate (rstack-cli context-plugin-boundary design, "Preview
+dependency policy"): a pkg.pr.new URL must not ship as a transitive
+dependency because `blockExoticSubdeps` consumers reject URL-resolved
+subdependencies, so downstream installs resolve `0.1.1` until a release
+ships. The canary is the head of open PR web-infra-dev/rsdoctor#1903
+(`codex/rsdoctor-rstack-artifact-contract`, mergeable, checks green). The
+published `0.1.1` release and that canary disagree on how an _omitted_ artifact section (one whose
 `metadata.summary.status === 'omitted'`, e.g. because the Rsdoctor run used an
 output mode that skips that section) is reported for output-mode-omitted
 data. Published `@rsdoctor/agent-cli@0.1.1` returns `{ ok: true, data: null
@@ -144,9 +147,11 @@ package's CI cannot ship against the published `0.1.1` release as-is.
 
 **Request:** merge web-infra-dev/rsdoctor#1903 and cut a release of
 `@rsdoctor/agent-cli` that includes the `RSDOCTOR_SECTION_UNAVAILABLE`
-semantics; once it ships, swap `package.json`'s canary URL for that release
-version. Until then the commit-pinned canary above is the supported
-resolution; the canary URL depends on pkg.pr.new artifact retention.
+semantics; once it ships, bump the semver dependency and drop the root-only
+override. Until then, downstream consumers on `0.1.1` see `{ ok: true,
+data: null }` for omitted sections, which this package's zero-shape
+detection (`formatRsdoctorAnalysis`) already reports as degraded rather
+than treating as evidence.
 
 ## Cross-repo follow-ups (rstack-cli coordination)
 

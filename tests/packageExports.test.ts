@@ -29,12 +29,11 @@ test('publishes focused Context entry points without a Rstack dependency', async
     './rstack',
     './rstest',
   ]);
-  // Commit-pinned canary of web-infra-dev/rsdoctor#1903: the dependency itself carries the
-  // resolution so downstream installs get the build these tests certify (overrides do not
-  // propagate). Swap for a release version once the PR merges and ships.
-  expect(packageJson.dependencies?.['@rsdoctor/agent-cli']).toBe(
-    'https://pkg.pr.new/@rsdoctor/agent-cli@ba5f0a83',
-  );
+  // The packed manifest must carry an ordinary semver dependency: blockExoticSubdeps
+  // consumers reject URL-resolved subdependencies. The commit-pinned canary of
+  // web-infra-dev/rsdoctor#1903 rides a root-only pnpm override for this repo's own
+  // validation instead (see pnpm-workspace.yaml). Bump once the PR merges and ships.
+  expect(packageJson.dependencies?.['@rsdoctor/agent-cli']).toBe('0.1.1');
   for (const section of [
     packageJson.dependencies,
     packageJson.devDependencies,
