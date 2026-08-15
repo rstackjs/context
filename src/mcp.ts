@@ -904,7 +904,7 @@ const createContextMcpServer = (
     {
       title: 'Link Rsdoctor report',
       description:
-        'Return a link to an explicit checkout-local Rsdoctor report artifact when present.',
+        'Return a link to a conventionally named checkout-local Rsdoctor report artifact when present.',
       inputSchema: reportLinkInput,
       annotations: readOnlyAnnotations,
     },

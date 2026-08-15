@@ -55,7 +55,7 @@ test('resolves one custom sibling HTML report when the conventional report is ab
     await writeDataFile(workspaceRoot);
     const reportPath = await writeWorkspaceFile(
       workspaceRoot,
-      'artifacts/custom-report.html',
+      'artifacts/custom-rsdoctor-report.html',
       '<html></html>',
     );
 
@@ -63,9 +63,51 @@ test('resolves one custom sibling HTML report when the conventional report is ab
       dataFile: validDataFile,
       report: {
         kind: 'html',
-        path: 'artifacts/custom-report.html',
+        path: 'artifacts/custom-rsdoctor-report.html',
         uri: pathToFileURL(reportPath).toString(),
       },
+    });
+  });
+});
+
+test('resolves the Rsdoctor default report name ahead of ordinary application HTML', async () => {
+  await withTempWorkspace('rstack-rsdoctor-report-', async (workspaceRoot) => {
+    await writeDataFile(workspaceRoot);
+    const reportPath = await writeWorkspaceFile(
+      workspaceRoot,
+      'artifacts/rsdoctor-report.html',
+      '<html></html>',
+    );
+    await writeWorkspaceFile(workspaceRoot, 'artifacts/index.html', '<html></html>');
+
+    await expect(resolveRsdoctorReport(workspaceRoot, validDataFile)).resolves.toEqual({
+      dataFile: validDataFile,
+      report: {
+        kind: 'html',
+        path: 'artifacts/rsdoctor-report.html',
+        uri: pathToFileURL(reportPath).toString(),
+      },
+    });
+  });
+});
+
+test('ignores an ordinary application HTML file beside the Rsdoctor data artifact', async () => {
+  await withTempWorkspace('rstack-rsdoctor-report-', async (workspaceRoot) => {
+    await writeDataFile(workspaceRoot);
+    await writeWorkspaceFile(
+      workspaceRoot,
+      'artifacts/index.html',
+      '<!doctype html><html><body><div id="root"></div><script type="module" src="/src.ts"></script></body></html>',
+    );
+
+    await expect(resolveRsdoctorReport(workspaceRoot, validDataFile)).resolves.toEqual({
+      dataFile: validDataFile,
+      nextAction: {
+        arguments: { dataFile: validDataFile, input: {}, toolName: 'build_summary' },
+        tool: 'rsdoctor_analyze',
+      },
+      reason:
+        'No GUI report was found; a GUI report is optional. Use rsdoctor_analyze for static inspection.',
     });
   });
 });
@@ -93,8 +135,8 @@ test('resolves the normal workspace .rsdoctor manifest when no sibling HTML repo
 test('returns a no-report response for ambiguous sibling HTML reports', async () => {
   await withTempWorkspace('rstack-rsdoctor-report-', async (workspaceRoot) => {
     await writeDataFile(workspaceRoot);
-    await writeWorkspaceFile(workspaceRoot, 'artifacts/first.html', '<html></html>');
-    await writeWorkspaceFile(workspaceRoot, 'artifacts/second.html', '<html></html>');
+    await writeWorkspaceFile(workspaceRoot, 'artifacts/first-rsdoctor.html', '<html></html>');
+    await writeWorkspaceFile(workspaceRoot, 'artifacts/second-rsdoctor.html', '<html></html>');
 
     await expect(resolveRsdoctorReport(workspaceRoot, validDataFile)).resolves.toEqual({
       dataFile: validDataFile,

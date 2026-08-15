@@ -70,10 +70,15 @@ const resolveReportFile = async (
   };
 };
 
-const getSiblingHtmlReports = async (directory: string): Promise<string[]> => {
+const getSiblingRsdoctorHtmlReports = async (directory: string): Promise<string[]> => {
   try {
     return (await readdir(directory, { withFileTypes: true }))
-      .filter((entry) => (entry.isFile() || entry.isSymbolicLink()) && entry.name.endsWith('.html'))
+      .filter(
+        (entry) =>
+          (entry.isFile() || entry.isSymbolicLink()) &&
+          entry.name.endsWith('.html') &&
+          /(?:^|[-_.])rsdoctor(?:[-_.]|$)/i.test(entry.name),
+      )
       .map((entry) => entry.name)
       .sort();
   } catch {
@@ -112,7 +117,9 @@ const resolveRsdoctorReport = async (
     };
   }
 
-  const htmlReports = await getSiblingHtmlReports(path.resolve(workspaceRoot, dataDirectory));
+  const htmlReports = await getSiblingRsdoctorHtmlReports(
+    path.resolve(workspaceRoot, dataDirectory),
+  );
   if (htmlReports.length === 1) {
     const sibling = await createReport(path.posix.join(dataDirectory, htmlReports[0]), 'html');
     if (sibling !== undefined) {
