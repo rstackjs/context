@@ -533,7 +533,16 @@ const listDiagnostics = async (
     .filter((item) => query.severity === undefined || item.severity === query.severity)
     .filter((item) => query.ruleId === undefined || item.ruleId === query.ruleId)
     .sort(compareDiagnostics);
-  const offset = decodeCursor(query.cursor, 'Invalid diagnostics cursor.');
+  const cursorScope = {
+    surface: 'diagnostics_list',
+    selectedSnapshotId: stored.snapshot.snapshotId,
+    snapshotId: query.snapshotId,
+    producer: query.producer,
+    pathPrefix: query.pathPrefix,
+    severity: query.severity,
+    ruleId: query.ruleId,
+  };
+  const offset = decodeCursor(query.cursor, 'Invalid diagnostics cursor.', cursorScope);
   const limit = getLimit(query.limit);
   const page = items.slice(offset, offset + limit);
   const nextOffset = offset + page.length;
@@ -547,7 +556,7 @@ const listDiagnostics = async (
     freshness: await assessSnapshotFreshness(workspaceRoot, stored.snapshot),
     total: items.length,
     items: page,
-    ...(nextOffset < items.length ? { nextCursor: encodeCursor(nextOffset) } : {}),
+    ...(nextOffset < items.length ? { nextCursor: encodeCursor(nextOffset, cursorScope) } : {}),
   };
 };
 

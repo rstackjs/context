@@ -332,6 +332,15 @@ test('paginates and filters diagnostics from one frozen snapshot deterministical
     await expect(
       listDiagnostics(workspaceRoot, {
         snapshotId: capture.snapshotId,
+        severity: 'warning',
+        pathPrefix: 'src/',
+        limit: 1,
+        cursor: first.nextCursor,
+      }),
+    ).rejects.toThrow('Invalid diagnostics cursor');
+    await expect(
+      listDiagnostics(workspaceRoot, {
+        snapshotId: capture.snapshotId,
         severity: 'error',
         pathPrefix: 'src/',
         limit: 1,
