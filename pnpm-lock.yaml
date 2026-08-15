@@ -6,7 +6,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@rsdoctor/agent-cli': https://pkg.pr.new/@rsdoctor/agent-cli@ba5f0a83
+  '@rsdoctor/agent-cli': https://pkg.pr.new/@rsdoctor/agent-cli@8926633c
 
 importers:
 
@@ -16,8 +16,8 @@ importers:
         specifier: 1.29.0
         version: 1.29.0(supports-color@7.2.0)(zod@4.4.3)
       '@rsdoctor/agent-cli':
-        specifier: https://pkg.pr.new/@rsdoctor/agent-cli@ba5f0a83
-        version: https://pkg.pr.new/@rsdoctor/agent-cli@ba5f0a83
+        specifier: https://pkg.pr.new/@rsdoctor/agent-cli@8926633c
+        version: https://pkg.pr.new/@rsdoctor/agent-cli@8926633c
       '@rslint/core':
         specifier: 0.8.0
         version: 0.8.0
@@ -175,9 +175,9 @@ packages:
       core-js:
         optional: true
 
-  '@rsdoctor/agent-cli@https://pkg.pr.new/@rsdoctor/agent-cli@ba5f0a83':
-    resolution: {integrity: sha512-k23rz020WxM9KK5Z84SoCoxxz7qMmSMlF8G2wkPasEdiJr6sce93wec/7XEQm+FjgNKrYJBTpY+onkGCMRVI2g==, tarball: https://pkg.pr.new/@rsdoctor/agent-cli@ba5f0a83}
-    version: 0.0.0-preview-ba5f0a8
+  '@rsdoctor/agent-cli@https://pkg.pr.new/@rsdoctor/agent-cli@8926633c':
+    resolution: {integrity: sha512-9gRufeY3ZqCIduHiZTzIciG1mC3Pm1aluNN+ZDxKmD2E0JbvAUur0qtSwtJtKsQJbVnb0gaKzWHxxd7MHnC63A==, tarball: https://pkg.pr.new/@rsdoctor/agent-cli@8926633c}
+    version: 0.0.0-preview-8926633
     engines: {node: '>=22.18.0'}
     hasBin: true
 
@@ -1034,7 +1034,7 @@ snapshots:
     transitivePeerDependencies:
       - '@module-federation/runtime-tools'
 
-  '@rsdoctor/agent-cli@https://pkg.pr.new/@rsdoctor/agent-cli@ba5f0a83': {}
+  '@rsdoctor/agent-cli@https://pkg.pr.new/@rsdoctor/agent-cli@8926633c': {}
 
   '@rslib/core@1.0.0-beta.3(typescript@7.0.2)':
     dependencies:

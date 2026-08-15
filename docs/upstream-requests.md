@@ -125,15 +125,16 @@ root-only override in `pnpm-workspace.yaml`:
 
 ```yaml
 overrides:
-  '@rsdoctor/agent-cli': 'https://pkg.pr.new/@rsdoctor/agent-cli@ba5f0a83'
+  '@rsdoctor/agent-cli': 'https://pkg.pr.new/@rsdoctor/agent-cli@8926633c'
 ```
 
 The split is deliberate (rstack-cli context-plugin-boundary design, "Preview
 dependency policy"): a pkg.pr.new URL must not ship as a transitive
 dependency because `blockExoticSubdeps` consumers reject URL-resolved
 subdependencies, so downstream installs resolve `0.1.1` until a release
-ships. The canary is the head of open PR web-infra-dev/rsdoctor#1903
-(`codex/rsdoctor-rstack-artifact-contract`, mergeable, checks green). The
+ships. The canary is the head of open PR web-infra-dev/rsdoctor#1924
+(`codex/agent-cli-input-validation`), stacked on #1903; both PRs are mergeable
+with checks green. The
 published `0.1.1` release and that canary disagree on how an _omitted_ artifact section (one whose
 `metadata.summary.status === 'omitted'`, e.g. because the Rsdoctor run used an
 output mode that skips that section) is reported for output-mode-omitted

@@ -12,6 +12,7 @@ minimumReleaseAgeExclude:
 # Root-only validation override, deliberately NOT part of the packed manifest: published
 # previews must carry ordinary semver dependencies because blockExoticSubdeps consumers
 # reject URL-resolved subdependencies (rstack-cli context-plugin-boundary design, "Preview
-# dependency policy"). Commit-pinned to the head of web-infra-dev/rsdoctor#1903.
+# dependency policy"). Commit-pinned to the stacked validation head in
+# web-infra-dev/rsdoctor#1924 (on top of #1903).
 overrides:
-  '@rsdoctor/agent-cli': 'https://pkg.pr.new/@rsdoctor/agent-cli@ba5f0a83'
+  '@rsdoctor/agent-cli': 'https://pkg.pr.new/@rsdoctor/agent-cli@8926633c'
