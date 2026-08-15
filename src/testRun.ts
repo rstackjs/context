@@ -489,6 +489,29 @@ const captureTestSnapshot = async (
   const unreadableInputs = recording.unreadablePaths.filter(
     (unreadablePath) => !inputs.some((input) => input.path === unreadablePath),
   );
+  const inputError =
+    unreadableInputs.length === 0
+      ? undefined
+      : Object.assign(
+          new Error(
+            `Could not read Rstest snapshot inputs: ${unreadableInputs.join(', ')}. Ensure the selected sources and reported test files exist and are readable.`,
+          ),
+          { name: 'TestInputError' },
+        );
+  const persistedFacet: TestFacet =
+    inputError === undefined
+      ? facet
+      : {
+          ...facet,
+          unhandledErrors: [
+            ...facet.unhandledErrors,
+            {
+              name: inputError.name,
+              message: inputError.message,
+              ...optionalString('stack', inputError.stack),
+            },
+          ],
+        };
   const snapshot: ContextSnapshot = {
     schemaVersion: contextStoreSchemaVersion,
     snapshotId: dependencies.createSnapshotId?.() ?? `snap_${Date.now()}_${randomUUID()}`,
@@ -496,9 +519,9 @@ const captureTestSnapshot = async (
     contextId: context.contextId,
     sequence: 0,
     observedAt: now().toISOString(),
-    status: getRunStatus(result),
+    status: inputError === undefined ? getRunStatus(result) : 'error',
     completeness: {
-      test: 'complete',
+      test: inputError === undefined ? 'complete' : 'partial',
       ...(executionFacet === undefined
         ? {}
         : {
@@ -511,15 +534,21 @@ const captureTestSnapshot = async (
       ...(unreadableInputs.length === 0 ? {} : { source: 'partial' as const }),
     },
     facets: {
-      test: facet as unknown as JsonValue,
+      test: persistedFacet as unknown as JsonValue,
       ...(executionFacet === undefined
         ? {}
         : { execution: executionFacet as unknown as JsonValue }),
     },
-    source: { inputs, inputCompleteness: 'partial', captureSelection },
+    source: {
+      inputs,
+      inputCompleteness: 'partial',
+      captureSelection,
+      ...(unreadableInputs.length === 0 ? {} : { unreadableInputs }),
+    },
   };
 
   ensureWritten(await writeContextSnapshot(workspaceRoot, snapshot));
+  if (inputError !== undefined) throw inputError;
   const errors: TestCaptureError[] = [
     ...facet.files.flatMap((file) =>
       (file.errors ?? []).map((error) => ({
@@ -567,7 +596,8 @@ const listTestResults = async (
   const stored =
     query.snapshotId === undefined
       ? (await readContextSnapshots(workspaceRoot, { producer: 'rstest' })).find(
-          ({ snapshot }) => snapshot.facets.test !== undefined,
+          ({ snapshot }) =>
+            snapshot.completeness.test === 'complete' && snapshot.facets.test !== undefined,
         )
       : await readContextSnapshotById(workspaceRoot, query.snapshotId);
   if (stored === undefined || stored.run.producer !== 'rstest') {

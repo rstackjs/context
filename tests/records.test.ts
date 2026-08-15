@@ -451,6 +451,14 @@ test('rejects malformed snapshots', () => {
     { ...snapshot, completeness: [] },
     { ...snapshot, completeness: { build: 'unknown' } },
     { ...snapshot, facets: [] },
+    {
+      ...snapshot,
+      source: {
+        inputs: [],
+        inputCompleteness: 'partial',
+        unreadableInputs: [42],
+      },
+    },
   ];
 
   for (const value of invalidSnapshots) {

@@ -35,6 +35,7 @@ const writeSnapshot = async (
     facets: ContextSnapshot['facets'];
     completeness: ContextSnapshot['completeness'];
     source?: ContextSnapshot['source'];
+    status?: ContextSnapshot['status'];
   },
 ): Promise<void> => {
   const context =
@@ -67,7 +68,7 @@ const writeSnapshot = async (
       contextId: context.contextId,
       sequence: 0,
       observedAt: options.observedAt,
-      status: 'pass',
+      status: options.status ?? 'pass',
       completeness: options.completeness,
       facets: options.facets,
       ...(options.source === undefined ? {} : { source: options.source }),
@@ -344,6 +345,78 @@ test('reports captured related-test evidence independently from test execution',
       readCodeEvidence(workspaceRoot, { path: 'src/missing.ts' }),
     ).resolves.toMatchObject({
       testRelation: { state: 'unknown', reason: 'source-not-selected', testFiles: [] },
+    });
+  });
+});
+
+test('keeps automatic test evidence complete while explicit selection exposes input errors', async () => {
+  await withTempWorkspace('rstack-code-evidence-', async (workspaceRoot) => {
+    const context = {
+      contextId: 'ctx_test_package',
+      packageRoot: '.',
+      product: 'development',
+      environment: 'test',
+    } as const;
+    const completeFacet = testFacet('tests/value.test.ts', 'pass', 'unused');
+    completeFacet.relation = {
+      sources: ['src/value.ts'],
+      testFiles: ['tests/value.test.ts'],
+    };
+    await writeSnapshot(workspaceRoot, {
+      producer: 'rstest',
+      snapshotId: 'snap_complete',
+      observedAt: '2026-08-13T01:00:00.000Z',
+      context,
+      facets: { test: completeFacet as unknown as JsonValue },
+      completeness: { test: 'complete' },
+    });
+
+    const inputErrorFacet = testFacet('tests/value.test.ts', 'pass', 'unused');
+    inputErrorFacet.relation = {
+      sources: ['src/value.ts'],
+      testFiles: ['tests/value.test.ts'],
+    };
+    inputErrorFacet.unhandledErrors = [
+      {
+        name: 'TestInputError',
+        message: 'Could not read Rstest snapshot inputs: src/value.ts.',
+      },
+    ];
+    await writeSnapshot(workspaceRoot, {
+      producer: 'rstest',
+      snapshotId: 'snap_input_error',
+      observedAt: '2026-08-13T02:00:00.000Z',
+      context,
+      status: 'error',
+      facets: { test: inputErrorFacet as unknown as JsonValue },
+      completeness: { test: 'partial', source: 'partial' },
+      source: {
+        inputs: [],
+        inputCompleteness: 'partial',
+        unreadableInputs: ['src/value.ts'],
+        captureSelection: { related: ['src/value.ts'] },
+      },
+    });
+
+    await expect(readCodeEvidence(workspaceRoot, { path: 'src/value.ts' })).resolves.toMatchObject({
+      provenance: { test: { snapshotId: 'snap_complete', completeness: { test: 'complete' } } },
+      testOutcome: { state: 'passed', basis: 'related-selection' },
+    });
+    await expect(
+      readCodeEvidence(workspaceRoot, {
+        path: 'src/value.ts',
+        testSnapshotId: 'snap_input_error',
+      }),
+    ).resolves.toMatchObject({
+      provenance: {
+        test: {
+          snapshotId: 'snap_input_error',
+          status: 'error',
+          completeness: { test: 'partial', source: 'partial' },
+          unreadableInputs: ['src/value.ts'],
+        },
+      },
+      testOutcome: { state: 'failed', basis: 'related-selection' },
     });
   });
 });

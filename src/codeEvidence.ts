@@ -35,6 +35,7 @@ type SnapshotEvidence = {
   completeness: ContextSnapshot['completeness'];
   freshness: ContextFreshness;
   packageRoot: string;
+  unreadableInputs?: string[];
 };
 
 type ExecutionCoverageEvidence = {
@@ -136,6 +137,7 @@ const selectSnapshot = async (
   return (await readContextSnapshots(workspaceRoot, { producer })).find(
     (stored) =>
       packageContainsPath(stored.context.packageRoot, sourcePath) &&
+      (producer !== 'rstest' || stored.snapshot.completeness.test === 'complete') &&
       stored.snapshot.facets[producer === 'rstest' ? 'test' : 'lint'] !== undefined &&
       (producer !== 'rslint' || lintSnapshotCapturedPath(stored, sourcePath)),
   );
@@ -152,6 +154,9 @@ const snapshotEvidence = async (
   completeness: stored.snapshot.completeness,
   freshness: await assessSnapshotFreshness(workspaceRoot, stored.snapshot),
   packageRoot: stored.context.packageRoot,
+  ...(stored.snapshot.source?.unreadableInputs === undefined
+    ? {}
+    : { unreadableInputs: [...stored.snapshot.source.unreadableInputs] }),
 });
 
 const locationOverlapsLine = (location: TestExecutionLocation, line: number | undefined): boolean =>

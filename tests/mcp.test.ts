@@ -222,20 +222,20 @@ test('captures a real test snapshot through injected capture dependencies', asyn
         },
       });
 
-      const degraded = await client.callTool({
+      const inputError = await client.callTool({
         name: 'test_snapshot',
         arguments: { files: ['tests/gone.test.ts'] },
       });
 
-      expect(degraded.isError).not.toBe(true);
-      expect(degraded.content).toEqual([
-        { type: 'text', text: expect.stringContaining('unreadableInputs=1') },
+      expect(inputError.isError).toBe(true);
+      expect(inputError.content).toEqual([
+        {
+          type: 'text',
+          text: expect.stringContaining(
+            'Could not read Rstest snapshot inputs: tests/gone.test.ts.',
+          ),
+        },
       ]);
-      expect(degraded.structuredContent).toMatchObject({
-        snapshotId: 'snap_mcp_2',
-        status: 'pass',
-        unreadableInputs: ['tests/gone.test.ts'],
-      });
       await expect(
         client.callTool({ name: 'snapshot_list', arguments: {} }),
       ).resolves.toMatchObject({
@@ -243,7 +243,8 @@ test('captures a real test snapshot through injected capture dependencies', asyn
           items: expect.arrayContaining([
             expect.objectContaining({
               snapshotId: 'snap_mcp_2',
-              completeness: { test: 'complete', source: 'partial' },
+              status: 'error',
+              completeness: { test: 'partial', source: 'partial' },
             }),
           ]),
         },

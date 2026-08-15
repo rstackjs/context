@@ -227,6 +227,10 @@ const isSnapshotSource = (value: unknown): boolean => {
             sha256Pattern.test(input.digest),
         ) &&
         (value.inputCompleteness === 'complete' || value.inputCompleteness === 'partial'))) &&
+    (value.unreadableInputs === undefined ||
+      (value.inputCompleteness === 'partial' &&
+        Array.isArray(value.unreadableInputs) &&
+        value.unreadableInputs.every(isRecordPath))) &&
     (value.virtualInputDigest === undefined ||
       (typeof value.virtualInputDigest === 'string' &&
         sha256Pattern.test(value.virtualInputDigest))) &&

@@ -19,6 +19,7 @@ type ContextSnapshotSource = {
   dirtyDigest?: string;
   inputs?: ContextInputFile[];
   inputCompleteness?: ContextInputCompleteness;
+  unreadableInputs?: string[];
   virtualInputDigest?: string;
   captureSelection?: JsonValue;
 };

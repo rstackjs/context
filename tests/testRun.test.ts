@@ -290,7 +290,7 @@ test('resolves related source files before running and records the static test r
   });
 });
 
-test('persists a degraded snapshot when a related source file cannot be read', async () => {
+test('persists an actionable error snapshot when a related source file cannot be read', async () => {
   await withTempWorkspace('rstack-context-test-run-', async (workspaceRoot) => {
     const testPath = path.join(workspaceRoot, 'tests', 'config.test.ts');
     await mkdir(path.dirname(testPath), { recursive: true });
@@ -312,18 +312,26 @@ test('persists a degraded snapshot when a related source file cannot be read', a
       },
     });
 
-    const capture = await captureTestSnapshot(
-      workspaceRoot,
-      { related: ['src/missing.ts'] },
-      {
-        ...createDependencies(result, calls, 'unreadable'),
-        resolveRelatedTests: () => Promise.resolve([testPath]),
-      },
-    );
+    await expect(
+      captureTestSnapshot(
+        workspaceRoot,
+        { related: ['src/missing.ts'] },
+        {
+          ...createDependencies(result, calls, 'unreadable'),
+          resolveRelatedTests: () => Promise.resolve([testPath]),
+        },
+      ),
+    ).rejects.toMatchObject({
+      name: 'TestInputError',
+      message:
+        'Could not read Rstest snapshot inputs: src/missing.ts. Ensure the selected sources and reported test files exist and are readable.',
+    });
 
-    expect(capture.unreadableInputs).toEqual(['src/missing.ts']);
-    const stored = await readContextSnapshotById(workspaceRoot, capture.snapshotId);
-    expect(stored?.snapshot.completeness).toEqual({ test: 'complete', source: 'partial' });
+    const stored = await readContextSnapshotById(workspaceRoot, 'snap_unreadable');
+    expect(stored?.snapshot).toMatchObject({
+      status: 'error',
+      completeness: { test: 'partial', source: 'partial' },
+    });
     expect(stored?.snapshot.source).toEqual({
       captureSelection: { related: ['src/missing.ts'] },
       inputCompleteness: 'partial',
@@ -333,10 +341,99 @@ test('persists a degraded snapshot when a related source file cannot be read', a
           digest: '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08',
         },
       ],
+      unreadableInputs: ['src/missing.ts'],
     });
     expect(stored?.snapshot.facets.test).toMatchObject({
       relation: { sources: ['src/missing.ts'], testFiles: ['tests/config.test.ts'] },
-      unhandledErrors: [],
+      unhandledErrors: [
+        {
+          name: 'TestInputError',
+          message:
+            'Could not read Rstest snapshot inputs: src/missing.ts. Ensure the selected sources and reported test files exist and are readable.',
+        },
+      ],
+    });
+    await expect(
+      listDiagnostics(workspaceRoot, { snapshotId: 'snap_unreadable' }),
+    ).resolves.toMatchObject({
+      snapshotId: 'snap_unreadable',
+      total: 1,
+      items: [
+        {
+          producer: 'rstest',
+          severity: 'error',
+          message:
+            'Could not read Rstest snapshot inputs: src/missing.ts. Ensure the selected sources and reported test files exist and are readable.',
+        },
+      ],
+    });
+  });
+});
+
+test('keeps the latest complete test results when a newer snapshot has unreadable inputs', async () => {
+  await withTempWorkspace('rstack-context-test-run-', async (workspaceRoot) => {
+    const sourcePath = path.join(workspaceRoot, 'src', 'config.ts');
+    const testPath = path.join(workspaceRoot, 'tests', 'config.test.ts');
+    await mkdir(path.dirname(sourcePath), { recursive: true });
+    await mkdir(path.dirname(testPath), { recursive: true });
+    await writeFile(sourcePath, 'export const value = 1;');
+    await writeFile(testPath, 'test');
+    const result = createResult({
+      files: [
+        {
+          project: 'default',
+          testPath,
+          name: 'config.test.ts',
+          status: 'pass',
+          results: [
+            {
+              project: 'default',
+              testPath,
+              name: 'reads config',
+              parentNames: [],
+              status: 'pass',
+            },
+          ],
+        },
+      ],
+      stats: {
+        tests: { total: 1, passed: 1, failed: 0, skipped: 0, todo: 0 },
+        files: { total: 1, failed: 0 },
+      },
+    });
+    const resolveRelatedTests = () => Promise.resolve([testPath]);
+
+    const complete = await captureTestSnapshot(
+      workspaceRoot,
+      { related: ['src/config.ts'] },
+      {
+        ...createDependencies(result, [], 'complete'),
+        resolveRelatedTests,
+      },
+    );
+    await unlink(sourcePath);
+    await expect(
+      captureTestSnapshot(
+        workspaceRoot,
+        { related: ['src/config.ts'] },
+        {
+          ...createDependencies(result, [], 'incomplete'),
+          resolveRelatedTests,
+        },
+      ),
+    ).rejects.toMatchObject({ name: 'TestInputError' });
+
+    await expect(listTestResults(workspaceRoot, {})).resolves.toMatchObject({
+      snapshotId: complete.snapshotId,
+      total: 1,
+      items: [{ name: 'reads config', status: 'pass' }],
+    });
+    await expect(
+      listTestResults(workspaceRoot, { snapshotId: 'snap_incomplete' }),
+    ).resolves.toMatchObject({
+      snapshotId: 'snap_incomplete',
+      total: 1,
+      items: [{ name: 'reads config', status: 'pass' }],
     });
   });
 });
