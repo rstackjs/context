@@ -1,0 +1,102 @@
+{
+  "name": "@rstackjs/context",
+  "version": "0.6.0",
+  "description": "Rstack project context, evidence storage, and MCP runtime.",
+  "homepage": "https://rstack.rs",
+  "bugs": {
+    "url": "https://github.com/rstackjs/context/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rstackjs/context.git"
+  },
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./mcp": {
+      "types": "./dist/mcp.d.ts",
+      "default": "./dist/mcp.js"
+    },
+    "./rsbuild": {
+      "types": "./dist/rsbuild.d.ts",
+      "default": "./dist/rsbuild.js"
+    },
+    "./rsdoctor": {
+      "types": "./dist/rsdoctor.d.ts",
+      "default": "./dist/rsdoctor.js"
+    },
+    "./rslib": {
+      "types": "./dist/rslib.d.ts",
+      "default": "./dist/rslib.js"
+    },
+    "./rslint": {
+      "types": "./dist/rslint.d.ts",
+      "default": "./dist/rslint.js"
+    },
+    "./rstack": {
+      "types": "./dist/rstack.d.ts",
+      "default": "./dist/rstack.js"
+    },
+    "./rstest": {
+      "types": "./dist/rstest.d.ts",
+      "default": "./dist/rstest.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "rslib",
+    "check": "rslint --type-check . && prettier --check .",
+    "dev": "rslib --watch",
+    "format": "prettier --write .",
+    "lint": "rslint --type-check .",
+    "prepare": "pnpm build",
+    "test": "rstest run",
+    "test:coverage": "rstest run --coverage",
+    "test:watch": "rstest"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "@rslint/core": "0.8.0",
+    "@rstest/core": "0.11.6",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@rsbuild/core": "2.1.11",
+    "@rsdoctor/agent-cli": "0.1.1",
+    "@rslib/core": "1.0.0-beta.3",
+    "@rstest/coverage-istanbul": "0.11.6",
+    "@types/node": "24.13.3",
+    "pkg-pr-new": "0.0.87",
+    "prettier": "3.9.6",
+    "typescript": "7.0.2"
+  },
+  "peerDependencies": {
+    "@rsdoctor/agent-cli": ">=0.1.1",
+    "@rsbuild/core": "^2.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@rsdoctor/agent-cli": {
+      "optional": true
+    },
+    "@rsbuild/core": {
+      "optional": true
+    }
+  },
+  "engines": {
+    "node": ">=22.12.0",
+    "pnpm": ">=11.0.0"
+  },
+  "packageManager": "pnpm@11.21.0",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

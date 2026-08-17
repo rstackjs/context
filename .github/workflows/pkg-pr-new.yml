@@ -1,0 +1,50 @@
+name: Publish Package Previews
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  publish:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Enable Corepack
+        run: corepack enable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.15.0
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Publish package preview
+        shell: bash
+        run: |
+          set +e
+          output=$(pnpm exec pkg-pr-new publish --pnpm --previewVersion --no-template '.' 2>&1)
+          status=$?
+          set -e
+          printf '%s\n' "$output"
+
+          if [ "$status" -eq 0 ]; then
+            exit 0
+          fi
+
+          if [[ "$output" == *'There is no workflow defined'* ]]; then
+            echo '::warning title=pkg.pr.new is not enabled::Grant the pkg.pr.new GitHub App access to rstackjs/context to publish preview packages.'
+            exit 0
+          fi
+
+          exit "$status"

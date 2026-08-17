@@ -1,0 +1,56 @@
+import { spawnSync } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
+import path from 'node:path';
+import { expect, test } from '@rstest/core';
+
+type PackageJson = {
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+  exports?: Record<string, unknown>;
+  peerDependencies?: Record<string, string>;
+};
+
+const repositoryRoot = path.resolve(import.meta.dirname, '..');
+
+const readPackageJson = async (): Promise<PackageJson> =>
+  JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')) as PackageJson;
+
+test('publishes focused Context entry points without a Rstack dependency', async () => {
+  const packageJson = await readPackageJson();
+
+  expect(Object.keys(packageJson.exports ?? {}).sort()).toEqual([
+    '.',
+    './mcp',
+    './package.json',
+    './rsbuild',
+    './rsdoctor',
+    './rslib',
+    './rslint',
+    './rstack',
+    './rstest',
+  ]);
+  // Consumers own this optional runtime so a host such as Rstack can pin a preview
+  // directly without turning it into a URL-resolved transitive dependency. This repo's
+  // root-only override still validates against web-infra-dev/rsdoctor#1903.
+  expect(packageJson.dependencies?.['@rsdoctor/agent-cli']).toBeUndefined();
+  expect(packageJson.devDependencies?.['@rsdoctor/agent-cli']).toBe('0.1.1');
+  expect(packageJson.peerDependencies?.['@rsdoctor/agent-cli']).toBe('>=0.1.1');
+  for (const section of [
+    packageJson.dependencies,
+    packageJson.devDependencies,
+    packageJson.peerDependencies,
+  ]) {
+    expect(section?.rstack).toBeUndefined();
+  }
+});
+
+test('loads each focused Context entry point independently', () => {
+  const entryPoints = ['rsbuild', 'rslib', 'rstest', 'rslint', 'rsdoctor', 'mcp', 'rstack'];
+  const script = `await Promise.all(${JSON.stringify(entryPoints)}.map((name) => import('@rstackjs/context/' + name)));`;
+  const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
+    cwd: repositoryRoot,
+    encoding: 'utf8',
+  });
+
+  expect(result.status, result.stderr).toBe(0);
+});
