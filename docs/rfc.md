@@ -281,14 +281,16 @@ For reachability, the adapter normalizes the artifact's module graph into stable
 edges, entry flags, chunk membership, optimizer bounds, and parse issues. Root selection then adds:
 
 - production entries observed in the artifact;
-- mapped `package.json` contract targets for library contexts;
-- side-effect roots; and
-- conservative roots for optimizer bailouts.
+- mapped `package.json` contract targets for library contexts.
+
+Optimizer bounds remain independent module evidence. A side-effect or CommonJS bailout can explain
+why code was retained after it was reached, but it does not make that module a product entry. This
+distinction prevents ordinary optimizer notes from turning every retained dependency into a root.
 
 Published library analysis carries an open-world bound. A package contract target that cannot be
 mapped to a module is also returned as a bound instead of being silently ignored.
 When the selected context comes only from a non-build producer such as Rstest, an explicit raw
-Rsdoctor artifact can still supply entry and conservative roots. The result reports an unknown
+Rsdoctor artifact can still supply observed entry roots. The result reports an unknown
 product and a `product-context-unavailable` bound, so artifact reachability remains available
 without inventing application or library contract semantics.
 
@@ -427,7 +429,7 @@ The implemented server exposes these 15 tools:
 | `project_status`    | Query              | List package/build contexts and their latest completed observations.  |
 | `product_roots`     | Query              | Resolve roots for one context and explicit Rsdoctor graph.            |
 | `unused_candidates` | Query              | List artifact-scoped unreachable module candidates.                   |
-| `dead_code_explain` | Query              | Explain one module's reachability, conservative retention, or bounds. |
+| `dead_code_explain` | Query              | Explain one module's reachability, optimizer retention, or bounds.    |
 | `module_impact`     | Query              | Traverse dependencies or dependents in one explicit artifact graph.   |
 | `code_evidence`     | Query              | Join bounded exact-path evidence without collapsing independent axes. |
 | `snapshot_list`     | Query              | Page immutable snapshots by producer or context.                      |
@@ -447,17 +449,17 @@ which Rsdoctor artifact the user intended.
 
 ### Module claim vocabulary
 
-The reachability tools use four classifications:
+The reachability tools use three classifications:
 
-| Classification                   | Meaning                                                             |
-| -------------------------------- | ------------------------------------------------------------------- |
-| `reachable`                      | A production or contract root has a path to the module.             |
-| `preserved-by-conservative-root` | An optimizer/side-effect root has a path to the module.             |
-| `unreachable-module-candidate`   | No selected root reaches it within the complete traversal.          |
-| `insufficient-evidence`          | Missing roots or traversal bounds prevent a complete module result. |
+| Classification                 | Meaning                                                             |
+| ------------------------------ | ------------------------------------------------------------------- |
+| `reachable`                    | A production or contract root has a path to the module.             |
+| `unreachable-module-candidate` | No selected root reaches it within the complete traversal.          |
+| `insufficient-evidence`        | Missing roots or traversal bounds prevent a complete module result. |
 
 An `unreachable-module-candidate` is a request for source and runtime verification, not a deletion
-decision. Export-level and local-symbol conclusions remain outside this branch.
+decision. Its independent optimizer-retention state and reasons remain visible for verification.
+Export-level and local-symbol conclusions remain outside this branch.
 
 ## Agent plugin distribution
 
@@ -549,7 +551,7 @@ Implemented downstream:
 Implemented downstream:
 
 - normalized Rsdoctor module graphs;
-- application entries, library contract targets, and conservative roots;
+- application entries and library contract targets;
 - bounded root reachability, shortest explanations, and impact traversal;
 - the four module-analysis MCP tools; and
 - one shared Codex and Claude Code integration in `rstackjs/agent-skills`.

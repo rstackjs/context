@@ -12,7 +12,7 @@ const context = (contextId: string, product: 'application' | 'library'): Context
   product,
 });
 
-test('derives application entry and conservative optimizer roots', async () => {
+test('derives application roots only from observed entries', async () => {
   const workspaceRoot = path.join(fixtureRoot, 'application');
   const graph = await readRsdoctorModuleGraph(workspaceRoot, 'rsdoctor-data.json');
 
@@ -28,9 +28,6 @@ test('derives application entry and conservative optimizer roots', async () => {
   expect(product.contractTargets).toEqual([]);
   expect(product.roots.map(({ kind, module }) => [kind, module.id])).toEqual([
     ['production-entry', '1'],
-    ['side-effect', '4'],
-    ['conservative-runtime', '8'],
-    ['conservative-runtime', '5'],
   ]);
   expect(product.bounds).toEqual([
     'export-usage-schema-unsupported',

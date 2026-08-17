@@ -674,7 +674,7 @@ const createContextMcpServer = (
     {
       title: 'Explain module reachability',
       description:
-        'Explain why one module is reachable, conservatively preserved, or an artifact-scoped candidate.',
+        'Explain why one module is reachable or an artifact-scoped candidate, including independent optimizer-retention evidence.',
       inputSchema: deadCodeExplainInput,
       annotations: readOnlyAnnotations,
     },

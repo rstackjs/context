@@ -50,7 +50,6 @@ type LoadedAnalysis = {
 type RootTraversals = {
   production: TraversalResult;
   contract: TraversalResult;
-  conservative: TraversalResult;
 };
 
 const candidateTraversalOptions = { maxDepth: 32, maxVisited: 20_000 } as const;
@@ -242,16 +241,9 @@ const unavailableGraphEvidence = (graph: ObservedModuleGraph): string =>
     ? 'The artifact graph does not match the selected build snapshot.'
     : 'The artifact does not contain an available module graph.';
 
-const rootsOfKind = (
-  product: ProductRootSet,
-  family: 'production' | 'contract' | 'conservative',
-): ProductRoot[] =>
+const rootsOfKind = (product: ProductRootSet, family: 'production' | 'contract'): ProductRoot[] =>
   product.roots.filter(({ kind }) =>
-    family === 'production'
-      ? kind === 'production-entry'
-      : family === 'contract'
-        ? kind === 'published-contract'
-        : kind === 'side-effect' || kind === 'conservative-runtime',
+    family === 'production' ? kind === 'production-entry' : kind === 'published-contract',
   );
 
 const traceRootFamilies = (
@@ -272,19 +264,12 @@ const traceRootFamilies = (
     'dependencies',
     { maxDepth, maxVisited },
   ),
-  conservative: traceModuleGraph(
-    graph,
-    rootsOfKind(product, 'conservative').map(({ module }) => module.id),
-    'dependencies',
-    { maxDepth, maxVisited },
-  ),
 });
 
 const traversalBounds = (product: ProductRootSet, traversals: RootTraversals): string[] => {
   const bounds = [...product.bounds];
   if (traversals.production.truncated) bounds.push('production-traversal-truncated');
   if (traversals.contract.truncated) bounds.push('contract-traversal-truncated');
-  if (traversals.conservative.truncated) bounds.push('conservative-traversal-truncated');
   return bounds;
 };
 
@@ -325,10 +310,8 @@ const isCandidate = (
   !product.bounds.includes('no-production-entry-roots') &&
   !traversals.production.truncated &&
   !traversals.contract.truncated &&
-  !traversals.conservative.truncated &&
   !traversals.production.predecessor.has(moduleId) &&
-  !traversals.contract.predecessor.has(moduleId) &&
-  !traversals.conservative.predecessor.has(moduleId);
+  !traversals.contract.predecessor.has(moduleId);
 
 const resolveModule = (graph: ObservedModuleGraph, selector: string): ObservedModule => {
   const ambiguous = (matches: ObservedModule[]): never => {
@@ -417,7 +400,7 @@ const findUnusedCandidates = async (
   if (!hasAuthoritativeGraph(graph)) {
     return {
       provenance,
-      roots: { production: 0, contract: 0, conservative: 0 },
+      roots: { production: 0, contract: 0 },
       total: 0,
       returned: 0,
       ownership: { project: 0, dependency: 0 },
@@ -462,7 +445,6 @@ const findUnusedCandidates = async (
     roots: {
       production: rootsOfKind(product, 'production').length,
       contract: rootsOfKind(product, 'contract').length,
-      conservative: rootsOfKind(product, 'conservative').length,
     },
     total: candidates.length,
     returned: returnedCandidates.length,
@@ -470,10 +452,7 @@ const findUnusedCandidates = async (
       project: candidates.length - dependencyCandidates,
       dependency: dependencyCandidates,
     },
-    analysisTruncated:
-      traversals.production.truncated ||
-      traversals.contract.truncated ||
-      traversals.conservative.truncated,
+    analysisTruncated: traversals.production.truncated || traversals.contract.truncated,
     resultTruncated: nextOffset < candidates.length,
     candidates: returnedCandidates,
     ...(nextOffset < candidates.length ? { nextCursor: encodeCursor(nextOffset) } : {}),
@@ -526,13 +505,6 @@ const explainAnalysisModule = (
     traversals.contract,
     module.id,
   );
-  const conservativePath = shortestRootPath(
-    graph,
-    rootsOfKind(product, 'conservative'),
-    traversals.conservative,
-    module.id,
-  );
-
   let classification: DeadCodeExplanation['classification'];
   let paths: ModulePath[];
   let evidence: string[];
@@ -540,12 +512,6 @@ const explainAnalysisModule = (
     classification = 'reachable';
     paths = [productionPath, contractPath].filter((entry) => entry !== undefined);
     evidence = ['A shortest path from a selected product root exists in this artifact graph.'];
-  } else if (conservativePath !== undefined) {
-    classification = 'preserved-by-conservative-root';
-    paths = [conservativePath];
-    evidence = [
-      'The module is reachable from a conservative optimizer root in this artifact graph.',
-    ];
   } else if (isCandidate(module.id, product, traversals)) {
     classification = 'unreachable-module-candidate';
     paths = [];
@@ -570,10 +536,7 @@ const explainAnalysisModule = (
     state: moduleState(module, product, traversals),
     paths,
     evidence,
-    analysisTruncated:
-      traversals.production.truncated ||
-      traversals.contract.truncated ||
-      traversals.conservative.truncated,
+    analysisTruncated: traversals.production.truncated || traversals.contract.truncated,
     bounds,
   };
 };

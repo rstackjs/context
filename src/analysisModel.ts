@@ -33,8 +33,7 @@ type ObservedModuleGraph = {
   >;
 };
 
-type ProductRootKind =
-  'production-entry' | 'published-contract' | 'side-effect' | 'conservative-runtime';
+type ProductRootKind = 'production-entry' | 'published-contract';
 
 type ProductRoot = {
   kind: ProductRootKind;
@@ -103,7 +102,6 @@ type UnusedCandidatesResult = {
   roots: {
     production: number;
     contract: number;
-    conservative: number;
   };
   total: number;
   returned: number;
@@ -125,11 +123,7 @@ type ModulePath = {
 type DeadCodeExplanation = {
   provenance: AnalysisProvenance;
   subject?: ModuleRef & { kind: 'module' };
-  classification:
-    | 'reachable'
-    | 'unreachable-module-candidate'
-    | 'preserved-by-conservative-root'
-    | 'insufficient-evidence';
+  classification: 'reachable' | 'unreachable-module-candidate' | 'insufficient-evidence';
   state: ModuleState;
   paths: ModulePath[];
   evidence: string[];

@@ -147,25 +147,6 @@ const resolveProductRoots = async (
     bounds.push('published-library-open-world');
   }
 
-  for (const module of graph.modules) {
-    if (module.optimizerBound === 'side-effect') {
-      addRoot(roots, {
-        kind: 'side-effect',
-        module: toModuleRef(module),
-        label: `side-effect bailout: ${module.name}`,
-      });
-    }
-  }
-  for (const module of graph.modules) {
-    if (module.optimizerBound !== undefined && module.optimizerBound !== 'side-effect') {
-      addRoot(roots, {
-        kind: 'conservative-runtime',
-        module: toModuleRef(module),
-        label: `${module.optimizerBound} bailout: ${module.name}`,
-      });
-    }
-  }
-
   if (graph.exportRowsPresent) bounds.push('export-usage-schema-unsupported');
   bounds.push(...graph.issues);
 

@@ -154,9 +154,6 @@ test('accepts a legacy artifact with explicit-unverified build provenance', asyn
     });
     expect(result.product.roots.map(({ kind, module }) => [kind, module.id])).toEqual([
       ['production-entry', '1'],
-      ['side-effect', '4'],
-      ['conservative-runtime', '8'],
-      ['conservative-runtime', '5'],
     ]);
   });
 });
@@ -194,7 +191,7 @@ test('binds v1 artifact metadata to the selected build snapshot on an exact iden
     });
 
     expect(roots.provenance.artifactBinding).toBe('exact');
-    expect(candidates.total).toBe(1);
+    expect(candidates.total).toBe(4);
   });
 });
 
@@ -410,7 +407,7 @@ test('does not bind a primary compiler graph to a different multi-compiler child
     expect(webCandidates.total).toBe(0);
     expect(webCandidates.bounds).toContain('artifact-build-mismatch');
     expect(serverCandidates.provenance.artifactBinding).toBe('exact');
-    expect(serverCandidates.total).toBe(1);
+    expect(serverCandidates.total).toBe(4);
   });
 });
 
@@ -431,32 +428,22 @@ test('returns only artifact-scoped unreachable module candidates', async () => {
     expect(result.roots).toEqual({
       production: 1,
       contract: 0,
-      conservative: 3,
     });
-    expect(result.total).toBe(1);
-    expect(result.returned).toBe(1);
+    expect(result.total).toBe(4);
+    expect(result.returned).toBe(4);
     expect(result.analysisTruncated).toBe(false);
     expect(result.resultTruncated).toBe(false);
-    expect(result.candidates).toEqual([
-      {
-        subject: {
-          kind: 'module',
-          id: '3',
-          path: 'src/legacy.ts',
-          name: 'legacy',
-          chunks: [],
-        },
-        classification: 'unreachable-module-candidate',
-        state: {
-          productionReachability: 'unreachable',
-          publicContract: 'not-required',
-          shipped: 'unknown',
-          optimizerRetention: 'unknown',
-        },
-        confidence: 'derived',
-        evidence: ['No path from selected roots in this artifact graph.'],
-        bounds: ['export-usage-schema-unsupported', 'duplicate-module-id', 'dangling-edge'],
-      },
+    expect(
+      result.candidates.map(({ subject, state }) => ({
+        id: subject.id,
+        shipped: state.shipped,
+        optimizerRetention: state.optimizerRetention,
+      })),
+    ).toEqual([
+      { id: '8', shipped: 'unknown', optimizerRetention: 'bailout' },
+      { id: '5', shipped: 'unknown', optimizerRetention: 'bailout' },
+      { id: '3', shipped: 'unknown', optimizerRetention: 'unknown' },
+      { id: '4', shipped: 'yes', optimizerRetention: 'side-effect' },
     ]);
   });
 });
@@ -566,7 +553,7 @@ test('keeps rootless modules unknown instead of deriving unreachable candidates'
   });
 });
 
-test('explains reachable, candidate, and conservatively preserved modules', async () => {
+test('explains reachable and unreachable modules without treating optimizer bounds as roots', async () => {
   await withFixtureWorkspace('application', async (workspaceRoot) => {
     const context = {
       contextId: 'ctx_app',
@@ -609,7 +596,7 @@ test('explains reachable, candidate, and conservatively preserved modules', asyn
     ]);
     expect(candidate.classification).toBe('unreachable-module-candidate');
     expect(candidate.state.productionReachability).toBe('unreachable');
-    expect(preserved.classification).toBe('preserved-by-conservative-root');
+    expect(preserved.classification).toBe('unreachable-module-candidate');
     expect(preserved.state.optimizerRetention).toBe('side-effect');
     expect(preserved.evidence).toContain('Rsdoctor optimizer: Top-level side effects');
   });
