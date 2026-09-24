@@ -4,15 +4,15 @@
 | ------- | --------------------------------------------------------------------------------- |
 | Status  | Implemented downstream through Phase 4; Phase 5 resolved without a custom UI      |
 | Created | 2026-08-12                                                                        |
-| Target  | `rstack`, Rspack 2, Rsbuild 2, Rslib 1, Rstest 0.11, Rslint 0.7, and Rsdoctor 2   |
+| Target  | Rspack 2, Rsbuild 2, Rslib 1, Rstest 0.12, Rslint 0.8, and Rsdoctor 2             |
 | Scope   | Headless build, lint, test, and artifact-scoped module evidence for coding agents |
 
 ## Summary
 
 The Rstack Context Engine turns completed Rsbuild, Rslib, Rslint, and Rstest observations into
-immutable records under the workspace cache. A single `rs mcp` process launched by an agent host
-resolves the workspace root and exposes compact queries over those records. The same MCP also reads
-explicit Rsdoctor artifacts for build analysis and module-level reachability.
+immutable records under the workspace cache. A single programmatic stdio process launched from
+`@rstackjs/context/mcp` resolves the workspace root and exposes compact queries over those records.
+The same MCP also reads explicit Rsdoctor artifacts for build analysis and module-level reachability.
 
 This is deliberately a lean, file-based design:
 
@@ -21,8 +21,8 @@ This is deliberately a lean, file-based design:
 - no coordinator daemon, task-runner integration, package-process discovery service, or development
   server route is required;
 - Rslint and Rstest execute only through explicit one-shot MCP tools;
-- the repository-based `rstack` plugin in `rstackjs/agent-skills` registers `rs mcp` for Codex and
-  Claude Code and provides six context workflows; and
+- the repository-based `rstack` plugin in `rstackjs/agent-skills` launches the Context package
+  directly for Codex and Claude Code and provides six context workflows; and
 - rich build visualization continues to use an existing Rsdoctor report through `report_link`.
 
 The unused-code feature is intentionally artifact-scoped. It identifies modules that are not
@@ -92,7 +92,7 @@ flowchart LR
   Store[(".rstack/cache/context-v1<br/>immutable run records")]
   Artifact["Explicit Rsdoctor artifact"]
   Report["Existing Rsdoctor report"]
-  MCP["rs mcp<br/>stdio query server"]
+  MCP["@rstackjs/context/mcp<br/>stdio query server"]
 
   Plugin["rstackjs/agent-skills<br/>one rstack plugin + six context skills"]
 
@@ -132,17 +132,16 @@ publish their results after the one-shot command completes.
 | MCP server             | Expose the query and explicit-capture tools over stdio.                                          |
 | Plugin skills          | Select the relevant tools and present their evidence boundaries to the model.                    |
 
-The runtime is packaged separately from the CLI facade. `@rstackjs/context` owns the store,
-producer adapters, normalized evidence, queries, and MCP implementation. `rstack` owns command and
-configuration integration, exposes the runtime through `rstack/context`, and supplies the Rstack
-config adapter when `rs mcp` runs explicit lint or test captures.
+`@rstackjs/context` owns the store, producer adapters, normalized evidence, queries, build observer,
+and MCP implementation. Rstack integration is ordinary shared configuration through RFC #504.
+Explicit lint and test captures use native producer configuration and do not depend on Rstack CLI.
 
 ### Monorepo process model
 
-The MCP process does not use its launch directory as a package or build identifier. `rs mcp` starts
-at the host-provided current working directory, walks upward to the nearest workspace manifest, Git
-checkout, or package root, and opens that workspace's store. Build processes perform the same
-workspace resolution from their loaded config path while retaining their own package root.
+The MCP process does not use its launch directory as a package or build identifier. The stdio entry
+starts at the host-provided current working directory, walks upward to the nearest workspace
+manifest, Git checkout, or package root, and opens that workspace's store. Build processes perform
+the same workspace resolution from their native plugin context while retaining their package root.
 
 ```mermaid
 flowchart TB
@@ -159,7 +158,7 @@ flowchart TB
     App -->|"run + packageRoot + contexts"| Store
   end
 
-  Agent["Agent session at repository root"] -->|stdio| MCP["one rs mcp server"]
+  Agent["Agent session at repository root"] -->|stdio| MCP["one Context MCP server"]
   MCP -->|"all completed runs"| Store
 ```
 
@@ -212,7 +211,7 @@ their original project-selected location.
 sequenceDiagram
   participant P as Package process
   participant S as Workspace store
-  participant M as rs mcp
+  participant M as Context MCP
   participant A as Agent
 
   P->>S: publish run.json
@@ -321,15 +320,22 @@ When `includeFixPreview` is true, the snapshot may contain whole-file fixed outp
 
 ### Rstest snapshots
 
-`test_snapshot` runs Rstest once through its programmatic API. The request can limit files and a test
-name pattern. The resulting snapshot records normalized test files, cases, errors, totals, and the
-run status. An explicit `execution` request also enables Istanbul for that one run and stores bounded
-aggregate statement, function, and branch-arm locations with exact source digests. It does not
-attribute coverage to individual tests. The source-input set remains partial because the adapter
-does not record a complete dependency graph. When the selected package does not install the optional
-Istanbul provider, the requested tests still run and the execution facet is recorded as unavailable.
-The capture result surfaces the provider, availability, and execution-universe completeness so an
-agent sees that limitation without making a second query.
+`related_tests` and `test_snapshot` require a native Rstest config for the selected package. Context
+uses Rstest's public `loadConfig()` result as the source of truth for discovery, including supported
+extensions and precedence. If no config file is found, both tools fail before constructing an Rstest
+instance; `test_snapshot` also writes no run manifest.
+
+`related_tests` lists the Rstest files statically related to one or more source files without
+executing test cases or writing a snapshot. `test_snapshot` runs Rstest once through its reusable
+programmatic API. The request can limit files, source files through `related`, and a test name
+pattern. Related execution passes the original source filters back to Rstest with `related: true`;
+the preflight's test paths are evidence, not replacement execution filters.
+
+The resulting snapshot records normalized test files, cases, errors, totals, and run status. An
+explicit `execution` request also enables Istanbul for that one run and stores bounded aggregate
+statement, function, and branch-arm locations with exact source digests. It does not attribute
+coverage to individual tests. When the selected package does not install the optional Istanbul
+provider, the requested tests still run and the execution facet is recorded as unavailable.
 
 The branch does not attach to an existing watch process, control watch cycles, or keep a resident
 Rstest session.
@@ -403,18 +409,15 @@ flowchart LR
 
 ### Server lifecycle
 
-The official `rstack` plugin in `rstackjs/agent-skills` registers one local stdio server named
-`rstack` for both Codex and Claude Code. Its Node launcher first
-resolves the workspace-root local `rstack` package and invokes its `rs` binary directly. When that
-package is unavailable from the workspace root, the launcher falls back to `rs mcp` from the MCP
-host `PATH`, inheriting standard input, output, and error and propagating the delegated process
-result.
+The official `rstack` plugin in `rstackjs/agent-skills` registers one local stdio server for Codex
+and Claude Code. Its Node launcher resolves `@rstackjs/context/mcp` from the checkout and invokes
+`runContextMcpServer()` directly. There is no Context binary, custom Rstack command, or PATH
+fallback.
 
-The plugin runtime launches in the agent session current working directory. `rs mcp` immediately
-resolves the enclosing workspace root, so package identity comes from producer records rather than
-from the MCP launch directory. The fallback also supports installations exposed through `PATH`,
-including package-scoped monorepo tooling. No daemon handshake, port allocation, live-process
-registry, or development-server connection is involved.
+The plugin runtime launches in the agent session current working directory and binds one checkout
+root for the process lifetime. Package identity comes from producer records rather than from the
+MCP launch directory. No daemon handshake, port allocation, live-process registry, or
+development-server connection is involved.
 
 The MCP server reads structured content and returns an MCP `resource_link` only for an existing
 Rsdoctor report. It does not currently register MCP resources, resource templates, prompts,
@@ -422,7 +425,7 @@ subscriptions, or a separate Rsdoctor MCP server.
 
 ### Tool catalog
 
-The implemented server exposes these 15 tools:
+The implemented server exposes these 16 tools:
 
 | Tool                | Kind               | Purpose                                                               |
 | ------------------- | ------------------ | --------------------------------------------------------------------- |
@@ -438,6 +441,7 @@ The implemented server exposes these 15 tools:
 | `snapshot_diff`     | Query              | Compare diagnostics or tests from two compatible snapshots.           |
 | `lint_fix_preview`  | Query              | Return stored fixed output without applying it.                       |
 | `lint_snapshot`     | Explicit execution | Run one Rslint capture and publish its snapshot.                      |
+| `related_tests`     | Discovery          | List native Rstest files related to selected sources without a run.   |
 | `test_snapshot`     | Explicit execution | Run one one-shot Rstest capture and publish its snapshot.             |
 | `rsdoctor_analyze`  | Query              | Invoke one supported Agent CLI tool against an explicit data file.    |
 | `report_link`       | Query              | Link an existing Rsdoctor HTML report or manifest.                    |
@@ -542,7 +546,7 @@ Implemented downstream:
 - immutable run manifests and context generations;
 - deterministic status across independent package processes;
 - opt-in Rsbuild and Rslib metadata observers;
-- the root-resolving `rs mcp` stdio server;
+- the root-resolving programmatic stdio server;
 - explicit Rsdoctor Agent CLI analysis; and
 - optional links to existing Rsdoctor reports.
 
@@ -565,12 +569,13 @@ Implemented downstream:
 
 - one-shot Rslint snapshots with normalized diagnostics;
 - one-shot Rstest snapshots with normalized file and case results;
+- native related-test discovery and related one-shot execution;
 - optional bounded aggregate Istanbul execution evidence;
 - producer-specific freshness; and
 - paginated snapshot, diagnostic, and test-result queries.
 
-Passive lint/test attachment, watch control, resident workers, type-check/timing capture,
-per-test coverage attribution, and related-test graph APIs remain deferred.
+Passive lint/test attachment, watch control, resident workers, type-check/timing capture, and
+per-test coverage attribution remain deferred.
 
 ### Phase 4: review workflows
 
@@ -624,8 +629,8 @@ The lean delivery sequence is:
 
 1. Aggregate existing Istanbul evidence into immutable snapshots and expose it through bounded
    exact-path composition. This branch implements this step.
-2. Add the existing Rstest related-file CLI output as a distinct static relation when a stable
-   structured seam is available.
+2. Use Rstest's public related-file API as a distinct static relation. This branch implements this
+   step through `related_tests` and related `test_snapshot` captures.
 3. Consume upstream Rstest test-file attribution and watch-cycle events when they are available.
 4. Join axes only when workspace, package, context, and exact input or graph digests match; otherwise
    report the evidence separately with its freshness.
@@ -642,7 +647,7 @@ The following are potential later work, not part of the implemented contract:
 - supported Rsdoctor export-usage and local-binding data;
 - direct standalone Rspack instrumentation;
 - passive Rslint/Rstest sessions and watch-cycle control;
-- static related-test evidence, per-test coverage attribution, and watch-cycle evidence;
+- per-test coverage attribution and watch-cycle evidence;
 - build, lint, or test subscriptions;
 - CI artifact import/export and performance gates;
 - source mutation and apply/verify flows;
@@ -667,11 +672,11 @@ The downstream implementation includes focused coverage for:
 - Rslint and Rstest snapshot normalization and freshness;
 - aggregate execution normalization and exact-path code evidence;
 - paging, compatible diffs, and lint previews;
-- the 15-tool MCP catalog and stdio behavior; and
+- the 16-tool MCP catalog and stdio behavior; and
 - both plugin manifests, MCP registration, and six-skill layouts.
 
-The branch's repository verification matrix is `pnpm check`, `pnpm check:spell`, `pnpm build`,
-`pnpm --filter rstack build:native`, and `pnpm test`.
+The repository verification matrix is `pnpm check`, `pnpm build`, `pnpm test`, packed-package
+imports, and the real stdio MCP test.
 
 ## Acceptance criteria
 

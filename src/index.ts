@@ -64,17 +64,14 @@ export {
   type DiagnosticRecord,
   type DiagnosticsQuery,
   type LintCaptureResult,
-  type LintCaptureAdapter,
   type LintFixPreviewResult,
   type LintSnapshotRequest,
-  type RslintFactory,
 } from './lint.ts';
 export {
   captureTestSnapshot,
+  listRelatedTests,
   listTestResults,
-  type RelatedTestRequest,
-  type ResolveRelatedTests,
-  type TestCaptureDependencies,
+  type RelatedTestSelection,
   type TestCaptureResult,
   type TestResultPage,
   type TestResultsQuery,
@@ -89,12 +86,4 @@ export {
   type SnapshotDiffRequest,
   type SnapshotDiffResult,
 } from './diff.ts';
-export { createContextMcpServer, type ContextMcpDependencies } from './mcp.ts';
-export {
-  createRstackContextPlugin,
-  type ContextBuildModifier,
-  type ContextRstackModifierContext,
-  type ContextRstackPlugin,
-  type ContextRstackPluginApi,
-  type ContextRstackPluginOptions,
-} from './rstack.ts';
+export { createContextMcpServer, runContextMcpServer, type ContextMcpDependencies } from './mcp.ts';

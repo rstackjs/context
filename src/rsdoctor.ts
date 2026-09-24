@@ -400,6 +400,47 @@ const resolveRsdoctorDataFile = async (
   return toRelativeWorkspaceFile(workspaceRoot, artifact.path);
 };
 
+const omittedSectionResult = (
+  toolName: RsdoctorToolName,
+  metadata: RsdoctorArtifactMetadata | undefined,
+): JsonValue | undefined => {
+  if (metadata === undefined) return undefined;
+  const unavailableSection = requiredSectionsByTool[toolName].find(
+    (section) => metadata.sections[section].status === 'omitted',
+  );
+  if (unavailableSection === undefined) return undefined;
+  const section = metadata.sections[unavailableSection];
+  if (section.status !== 'omitted') return undefined;
+  return {
+    ok: false,
+    error: {
+      code: 'RSDOCTOR_SECTION_UNAVAILABLE',
+      message: `Rsdoctor artifact section "${unavailableSection}" is unavailable (${section.reason}).`,
+      reason: section.reason,
+      section: unavailableSection,
+      status: 'omitted',
+    },
+  };
+};
+
+const executeRsdoctorTool = async (
+  executor: RsdoctorAdapter['executor'],
+  artifact: RsdoctorArtifact,
+  toolName: RsdoctorToolName,
+  input: Record<string, unknown>,
+): Promise<JsonValue> => {
+  try {
+    return (await executor.execute({
+      dataFile: artifact.path,
+      input,
+      toolName,
+    })) as JsonValue;
+  } catch (error) {
+    const cause = error instanceof Error ? ` Cause: ${error.message}` : '';
+    throw new Error(`Rsdoctor analysis failed.${cause}`, { cause: error });
+  }
+};
+
 const analyzeRsdoctorArtifact = async (
   workspaceRoot: string,
   request: RsdoctorAnalysisRequest,
@@ -415,24 +456,14 @@ const analyzeRsdoctorArtifact = async (
   const tool = catalog.find(({ name }) => name === request.toolName)!;
   const input = getInput(request.input, tool);
   const artifact = await readRsdoctorArtifact(workspaceRoot, request.dataFile);
-
-  let result: unknown;
-  try {
-    result = await executor.execute({
-      dataFile: artifact.path,
-      input,
-      toolName: request.toolName,
-    });
-  } catch (error) {
-    const cause = error instanceof Error ? ` Cause: ${error.message}` : '';
-    throw new Error(`Rsdoctor analysis failed.${cause}`, { cause: error });
-  }
-
   const metadata = artifact.metadata;
+  const result =
+    omittedSectionResult(request.toolName, metadata) ??
+    (await executeRsdoctorTool(executor, artifact, request.toolName, input));
   return {
     dataFile: request.dataFile,
     ...(metadata === undefined ? {} : { artifactMetadata: metadata }),
-    result: result as JsonValue,
+    result,
     sectionEvidence:
       metadata === undefined
         ? []

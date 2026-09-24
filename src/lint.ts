@@ -22,8 +22,6 @@ import {
   createExplicitContextDescriptor,
   createExplicitRun,
   resolveExplicitCaptureTarget,
-  resolveInternalConfigPath,
-  type ConfigTargetRunner,
 } from './source.ts';
 import {
   readContextSnapshotById,
@@ -66,11 +64,6 @@ type RslintEngine = {
 };
 
 type RslintFactory = (options: RslintOptions) => RslintEngine;
-
-type LintCaptureAdapter = {
-  wrapperConfigPath: string;
-  withConfigTarget: ConfigTargetRunner;
-};
 
 type DiagnosticsQuery = {
   snapshotId?: string;
@@ -241,15 +234,9 @@ const captureLintSnapshot = async (
   workspaceRoot: string,
   request: LintSnapshotRequest,
   createRslint?: RslintFactory,
-  adapter?: LintCaptureAdapter,
 ): Promise<LintCaptureResult> => {
-  if (adapter?.withConfigTarget === undefined && createRslint === undefined) {
-    throw new Error('Rstack lint capture requires a config adapter.');
-  }
   const includeFixPreview = request.includeFixPreview ?? false;
   const target = await resolveExplicitCaptureTarget(workspaceRoot, request);
-  const wrapperConfigPath =
-    adapter?.wrapperConfigPath ?? resolveInternalConfigPath(import.meta.dirname, 'rslintConfig.js');
   const context = createExplicitContextDescriptor({
     producer: 'rslint',
     workspaceRoot,
@@ -263,7 +250,7 @@ const captureLintSnapshot = async (
   });
   const options = {
     cwd: target.packageRoot,
-    overrideConfigFile: wrapperConfigPath,
+    ...(target.configPath === undefined ? {} : { overrideConfigFile: target.configPath }),
     fix: includeFixPreview,
   } satisfies RslintOptions;
   const runWrite = await writeContextRunManifest(workspaceRoot, run);
@@ -274,21 +261,18 @@ const captureLintSnapshot = async (
   }
   let results: LintResult[];
   try {
-    const withConfigTarget =
-      adapter?.withConfigTarget ?? (async (_configRoot, _configPath, action) => action());
-    results = await withConfigTarget(target.packageRoot, target.configPath, async () => {
-      const engine = createRslint?.(options) ?? new (await import('@rslint/core')).Rslint(options);
-      try {
-        return request.mode === 'files'
+    const engine = createRslint?.(options) ?? new (await import('@rslint/core')).Rslint(options);
+    try {
+      results =
+        request.mode === 'files'
           ? await engine.lintFiles(request.patterns ?? ['.'])
           : await engine.lintText(request.code, { filePath: request.filePath });
-      } finally {
-        await engine.close();
-      }
-    });
+    } finally {
+      await engine.close();
+    }
     if (results.length === 0) {
       throw new Error(
-        'Rslint reported no files. Verify that the selected Rstack configuration defines lint with define.lint and that the requested patterns match lint inputs.',
+        'Rslint reported no files. Verify that the native Rslint configuration and requested patterns select lint inputs.',
       );
     }
   } catch (error) {
@@ -609,7 +593,6 @@ export type {
   DiagnosticRecord,
   DiagnosticsQuery,
   LintCaptureResult,
-  LintCaptureAdapter,
   LintFacetDiagnostic,
   LintFixPreviewResult,
   LintSnapshotRequest,

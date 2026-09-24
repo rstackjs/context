@@ -7,6 +7,7 @@ import type {
   OnBeforeBuildFn,
   Rspack,
   RsbuildConfig,
+  RsbuildContext,
   RsbuildPlugin,
 } from '@rsbuild/core';
 import { sha256Hex } from './guards.ts';
@@ -20,20 +21,68 @@ import {
   type ContextStoreWriteResult,
 } from './model.ts';
 import { toWorkspacePath } from './paths.ts';
+import { recordContextInputFiles } from './source.ts';
 import { writeContextRunManifest, writeContextSnapshot } from './store.ts';
+import { resolveContextWorkspace } from './workspace.ts';
 import type { ResolvedContextWorkspace } from './workspace.ts';
 
 type BuildContextPluginOptions = {
   producer: 'rsbuild' | 'rslib';
   product: 'application' | 'library';
   capture: 'metadata' | 'deep';
-  workspace: ResolvedContextWorkspace;
-  configPath?: string;
   params: ConfigParams;
   variant?: string;
+  workspace?: ResolvedContextWorkspace;
+  configPath?: string;
   inputs?: ContextInputFile[];
   createRunId?: () => string;
   now?: () => Date;
+};
+
+type ResolvedBuildContextPluginOptions = BuildContextPluginOptions & {
+  workspace: ResolvedContextWorkspace;
+  configPath?: string;
+  inputs?: ContextInputFile[];
+};
+
+type BuildContextProvenance = Pick<
+  RsbuildContext,
+  'configFile' | 'configFileDependencies' | 'rootPath'
+>;
+
+const resolveBuildContextPluginOptions = async (
+  options: BuildContextPluginOptions,
+  provenance: BuildContextProvenance,
+): Promise<ResolvedBuildContextPluginOptions> => {
+  if (options.workspace !== undefined) {
+    return {
+      ...options,
+      workspace: options.workspace,
+    };
+  }
+
+  const configPath = provenance.configFile;
+  const workspace = await resolveContextWorkspace(configPath ?? provenance.rootPath);
+  const configInputs =
+    configPath === undefined ? [] : [configPath, ...provenance.configFileDependencies];
+  const inputs =
+    configInputs.length === 0
+      ? undefined
+      : await recordContextInputFiles(workspace.workspaceRoot, [...new Set(configInputs)]);
+
+  return {
+    ...options,
+    workspace,
+    ...(configPath === undefined ? {} : { configPath }),
+    ...(inputs === undefined ? {} : { inputs }),
+  };
+};
+
+const createBuildContextPluginOptionsResolver = (options: BuildContextPluginOptions) => {
+  let resolvedOptionsPromise: Promise<ResolvedBuildContextPluginOptions> | undefined;
+
+  return (provenance: BuildContextProvenance) =>
+    (resolvedOptionsPromise ??= resolveBuildContextPluginOptions(options, provenance));
 };
 
 const getTarget = (environment: EnvironmentContext): string => environment.config.output.target;
@@ -50,29 +99,43 @@ const normalizeMetadataPath = (workspaceRoot: string, value: string): string =>
       : value.split(path.sep).join('/').replaceAll('\\', '/'),
   );
 
-const buildMetadataFacet = ({
-  options,
-  environment,
-  isFirstCompile,
-  isWatch,
-  stats,
-  time,
-}: {
-  options: BuildContextPluginOptions;
-  environment: EnvironmentContext;
-  isFirstCompile: boolean;
-  isWatch: boolean;
-  stats: NonNullable<Parameters<OnAfterEnvironmentCompileFn>[0]['stats']>;
-  time: number;
-}): BuildMetadataFacet => {
-  const json = stats.toJson({
+type CapturedBuildStats = {
+  json: Pick<Rspack.StatsCompilation, 'assets' | 'chunks' | 'hash'>;
+  hasErrors: boolean;
+  hasWarnings: boolean;
+};
+
+const captureBuildStats = (
+  stats: NonNullable<Parameters<OnAfterEnvironmentCompileFn>[0]['stats']>,
+): CapturedBuildStats => ({
+  json: stats.toJson({
     all: false,
     hash: true,
     assets: true,
     chunks: true,
     errors: false,
     warnings: false,
-  }) as Pick<Rspack.StatsCompilation, 'assets' | 'chunks' | 'hash'>;
+  }) as Pick<Rspack.StatsCompilation, 'assets' | 'chunks' | 'hash'>,
+  hasErrors: stats.hasErrors(),
+  hasWarnings: stats.hasWarnings(),
+});
+
+const buildMetadataFacet = ({
+  options,
+  environment,
+  isFirstCompile,
+  isWatch,
+  capturedStats,
+  time,
+}: {
+  options: ResolvedBuildContextPluginOptions;
+  environment: EnvironmentContext;
+  isFirstCompile: boolean;
+  isWatch: boolean;
+  capturedStats: CapturedBuildStats;
+  time: number;
+}): BuildMetadataFacet => {
+  const { json } = capturedStats;
   const assets: BuildMetadataFacet['assets'] = [];
   let droppedAssets = 0;
   for (const asset of json.assets ?? []) {
@@ -125,8 +188,8 @@ const buildMetadataFacet = ({
     isFirstCompile,
     durationMs: time,
     ...(typeof json.hash === 'string' ? { hash: json.hash } : {}),
-    hasErrors: stats.hasErrors(),
-    hasWarnings: stats.hasWarnings(),
+    hasErrors: capturedStats.hasErrors,
+    hasWarnings: capturedStats.hasWarnings,
     assets,
     chunks,
     truncated: {
@@ -141,14 +204,15 @@ const captureSnapshot = ({
   environment,
   isFirstCompile,
   isWatch,
-  stats,
+  capturedStats,
   time,
-}: Parameters<OnAfterEnvironmentCompileFn>[0] & {
-  options: BuildContextPluginOptions;
+}: Omit<Parameters<OnAfterEnvironmentCompileFn>[0], 'stats'> & {
+  options: ResolvedBuildContextPluginOptions;
+  capturedStats?: CapturedBuildStats;
 }): Pick<ContextSnapshot, 'completeness' | 'facets' | 'status'> => {
   const deep = options.capture === 'deep' ? 'unsupported' : 'disabled';
 
-  if (stats === undefined) {
+  if (capturedStats === undefined) {
     return {
       completeness: { build: 'partial', deep },
       facets: {},
@@ -161,7 +225,7 @@ const captureSnapshot = ({
     environment,
     isFirstCompile,
     isWatch,
-    stats,
+    capturedStats,
     time,
   });
   return {
@@ -178,7 +242,7 @@ const ensureContextWrite = (result: ContextStoreWriteResult): void => {
 };
 
 const createContextDescriptor = (
-  options: BuildContextPluginOptions,
+  options: ResolvedBuildContextPluginOptions,
   environment: EnvironmentContext,
 ): ContextDescriptor => {
   const packageRoot =
@@ -229,6 +293,7 @@ const appendBuildContextPlugin = <T extends { plugins?: RsbuildConfig['plugins']
 });
 
 const createBuildContextPlugin = (options: BuildContextPluginOptions): RsbuildPlugin => {
+  const resolveOptions = createBuildContextPluginOptionsResolver(options);
   let runPromise: Promise<void> | undefined;
   let run: ContextRunManifest | undefined;
   let descriptorsByEnvironment: ReadonlyMap<string, ContextDescriptor> | undefined;
@@ -261,15 +326,16 @@ const createBuildContextPlugin = (options: BuildContextPluginOptions): RsbuildPl
           return;
         }
 
-        const now = options.now ?? (() => new Date());
+        const resolvedOptions = await resolveOptions(api.context);
+        const now = resolvedOptions.now ?? (() => new Date());
         const contexts = Object.values(environments)
-          .map((environment) => createContextDescriptor(options, environment))
+          .map((environment) => createContextDescriptor(resolvedOptions, environment))
           .sort((left, right) => left.environment!.localeCompare(right.environment!));
         const nextRun: ContextRunManifest = {
           schemaVersion: contextStoreSchemaVersion,
-          runId: options.createRunId?.() ?? `run_${Date.now()}_${randomUUID()}`,
-          producer: options.producer,
-          command: options.params.command,
+          runId: resolvedOptions.createRunId?.() ?? `run_${Date.now()}_${randomUUID()}`,
+          producer: resolvedOptions.producer,
+          command: resolvedOptions.params.command,
           startedAt: now().toISOString(),
           contexts,
         };
@@ -278,7 +344,7 @@ const createBuildContextPlugin = (options: BuildContextPluginOptions): RsbuildPl
         descriptorsByEnvironment = new Map(
           contexts.map((context) => [context.environment!, context]),
         );
-        runPromise = writeContextRunManifest(options.workspace.workspaceRoot, nextRun).then(
+        runPromise = writeContextRunManifest(resolvedOptions.workspace.workspaceRoot, nextRun).then(
           ensureContextWrite,
         );
         await runPromise;
@@ -291,14 +357,7 @@ const createBuildContextPlugin = (options: BuildContextPluginOptions): RsbuildPl
         stats,
         time,
       }) => {
-        const capture = captureSnapshot({
-          options,
-          environment,
-          isFirstCompile,
-          isWatch,
-          stats,
-          time,
-        });
+        const capturedStats = stats === undefined ? undefined : captureBuildStats(stats);
         const environmentName = environment.name;
         const currentRun = run;
         const currentRunPromise = runPromise;
@@ -314,13 +373,22 @@ const createBuildContextPlugin = (options: BuildContextPluginOptions): RsbuildPl
           }
 
           await currentRunPromise;
+          const resolvedOptions = await resolveOptions(api.context);
+          const capture = captureSnapshot({
+            options: resolvedOptions,
+            environment,
+            isFirstCompile,
+            isWatch,
+            capturedStats,
+            time,
+          });
           const descriptor = currentDescriptorsByEnvironment.get(environmentName);
           if (descriptor === undefined) {
             throw new Error('Build environment is missing from the run manifest.');
           }
 
           const sequence = (sequencesByContext.get(descriptor.contextId) ?? 0) + 1;
-          const now = options.now ?? (() => new Date());
+          const now = resolvedOptions.now ?? (() => new Date());
           const snapshot: ContextSnapshot = {
             schemaVersion: contextStoreSchemaVersion,
             snapshotId: `snap_${currentRun.runId}_${descriptor.contextId}_${sequence}`,
@@ -329,17 +397,19 @@ const createBuildContextPlugin = (options: BuildContextPluginOptions): RsbuildPl
             sequence,
             observedAt: now().toISOString(),
             ...capture,
-            ...(options.inputs === undefined
+            ...(resolvedOptions.inputs === undefined
               ? {}
               : {
                   source: {
-                    inputs: options.inputs,
+                    inputs: resolvedOptions.inputs,
                     inputCompleteness: 'partial',
                   },
                 }),
           };
 
-          ensureContextWrite(await writeContextSnapshot(options.workspace.workspaceRoot, snapshot));
+          ensureContextWrite(
+            await writeContextSnapshot(resolvedOptions.workspace.workspaceRoot, snapshot),
+          );
           sequencesByContext.set(descriptor.contextId, sequence);
         })();
       };

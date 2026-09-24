@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
 import { access, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { sha256Hex } from './guards.ts';
@@ -53,23 +52,6 @@ type ConfigTargetRunner = <T>(
   action: () => Promise<T>,
 ) => Promise<T>;
 
-const rstackConfigFileNames = [
-  'rstack.config.ts',
-  'rstack.config.js',
-  'rstack.config.mts',
-  'rstack.config.mjs',
-] as const;
-
-const resolveInternalConfigPath = (moduleDirectory: string, fileName: string): string => {
-  const siblingPath = path.join(moduleDirectory, fileName);
-  if (existsSync(siblingPath)) return siblingPath;
-  const parentPath = path.join(moduleDirectory, '..', fileName);
-  if (existsSync(parentPath)) return parentPath;
-  throw new Error(
-    `The bundled wrapper config "${fileName}" is not present next to "${moduleDirectory}". Supply an explicit wrapperConfigPath for this capture.`,
-  );
-};
-
 const readPackageName = async (packageRoot: string): Promise<string | undefined> => {
   try {
     const packageJson: unknown = JSON.parse(
@@ -87,8 +69,11 @@ const readPackageName = async (packageRoot: string): Promise<string | undefined>
   }
 };
 
-const findPackageConfig = async (packageRoot: string): Promise<string | undefined> => {
-  for (const fileName of rstackConfigFileNames) {
+const findPackageConfig = async (
+  packageRoot: string,
+  configFileNames: readonly string[],
+): Promise<string | undefined> => {
+  for (const fileName of configFileNames) {
     const configPath = path.join(packageRoot, fileName);
     try {
       await access(configPath);
@@ -103,6 +88,7 @@ const findPackageConfig = async (packageRoot: string): Promise<string | undefine
 const resolveExplicitCaptureTarget = async (
   workspaceRoot: string,
   request: ExplicitCaptureTargetRequest,
+  configFileNames: readonly string[] = [],
 ): Promise<ExplicitCaptureTarget> => {
   const packageRoot = resolveContainedPath(
     workspaceRoot,
@@ -111,7 +97,7 @@ const resolveExplicitCaptureTarget = async (
   );
   const configPath =
     request.configPath === undefined
-      ? await findPackageConfig(packageRoot)
+      ? await findPackageConfig(packageRoot, configFileNames)
       : resolveContainedPath(workspaceRoot, 'configPath', request.configPath);
   const packageName = await readPackageName(packageRoot);
 
@@ -222,7 +208,6 @@ export {
   createExplicitRun,
   recordContextInputFiles,
   resolveExplicitCaptureTarget,
-  resolveInternalConfigPath,
 };
 export type {
   ConfigTargetRunner,

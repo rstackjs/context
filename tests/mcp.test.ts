@@ -2,8 +2,10 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { expect, test } from '@rstest/core';
+import type { TestRunResult } from '@rstest/core/api';
 import pkgJson from '../package.json' with { type: 'json' };
 import { createContextMcpServer, type ContextMcpDependencies } from '../src/mcp.ts';
 import { writeContextRunManifest, writeContextSnapshot } from '../src/store.ts';
@@ -21,6 +23,7 @@ const toolNames = [
   'snapshot_diff',
   'lint_fix_preview',
   'lint_snapshot',
+  'related_tests',
   'test_snapshot',
   'rsdoctor_analyze',
   'report_link',
@@ -49,6 +52,59 @@ const withClient = async (
   }
 };
 
+const createNativeTestResult = (testPath: string): TestRunResult => ({
+  status: 'pass',
+  results: [
+    {
+      testId: `file:${testPath}`,
+      project: 'default',
+      testPath,
+      name: path.basename(testPath),
+      status: 'pass',
+      results: [
+        {
+          testId: 'case:adds',
+          project: 'default',
+          testPath,
+          name: 'adds',
+          status: 'pass',
+        },
+      ],
+    },
+  ],
+  testResults: [
+    {
+      testId: 'case:adds',
+      project: 'default',
+      testPath,
+      name: 'adds',
+      status: 'pass',
+    },
+  ],
+  summary: {
+    tests: { total: 1, passed: 1, failed: 0, skipped: 0, todo: 0 },
+    files: { total: 1, failed: 0 },
+  },
+  duration: { totalTime: 1, buildTime: 0, testTime: 1 },
+  snapshotSummary: {
+    added: 0,
+    failure: false,
+    filesAdded: 0,
+    filesRemoved: 0,
+    filesRemovedList: [],
+    filesUnmatched: 0,
+    filesUpdated: 0,
+    matched: 0,
+    total: 0,
+    unchecked: 0,
+    uncheckedKeysByFile: [],
+    unmatched: 0,
+    updated: 0,
+    didUpdate: false,
+  },
+  unhandledErrors: [],
+});
+
 test('publishes the complete standalone MCP catalog', async () => {
   await withClient(async (client) => {
     const { tools } = await client.listTools();
@@ -69,6 +125,149 @@ test('publishes the complete standalone MCP catalog', async () => {
       'only together with contextId',
     );
   });
+});
+
+test('serves the Context catalog through the programmatic stdio entry point', async () => {
+  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), 'rstack-context-cli-'));
+  const client = new Client({ name: 'context-cli-test-client', version: '1.0.0' });
+  const mcpEntry = new URL('../dist/mcp.js', import.meta.url).href;
+  await writeFile(
+    path.join(workspaceRoot, 'rstest.config.js'),
+    `export default { globals: true, include: ['**/*.test.js'] };\n`,
+  );
+  await writeFile(path.join(workspaceRoot, 'math.js'), 'export const add = (a, b) => a + b;\n');
+  await writeFile(
+    path.join(workspaceRoot, 'math.test.js'),
+    `import { add } from './math.js';\ntest('adds', () => expect(add(1, 2)).toBe(3));\n`,
+  );
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [
+      '--input-type=module',
+      '--eval',
+      `import(${JSON.stringify(mcpEntry)}).then(({ runContextMcpServer }) => runContextMcpServer())`,
+    ],
+    cwd: workspaceRoot,
+    stderr: 'pipe',
+  });
+
+  try {
+    await client.connect(transport);
+    const { tools } = await client.listTools();
+    expect(tools.map(({ name }) => name)).toEqual(toolNames);
+    await expect(
+      client.callTool({
+        name: 'related_tests',
+        arguments: { related: ['math.js'] },
+      }),
+    ).resolves.toMatchObject({
+      structuredContent: {
+        sources: ['math.js'],
+        testFiles: ['math.test.js'],
+        total: 1,
+      },
+    });
+    await expect(
+      client.callTool({
+        name: 'test_snapshot',
+        arguments: { related: ['math.js'] },
+      }),
+    ).resolves.toMatchObject({
+      structuredContent: {
+        status: 'pass',
+        summary: { files: 1, tests: 1 },
+      },
+    });
+  } finally {
+    await client.close();
+    await rm(workspaceRoot, { force: true, recursive: true });
+  }
+});
+
+test('lists native related tests without executing cases or writing a snapshot', async () => {
+  const calls: unknown[] = [];
+  await withClient(
+    async (client, workspaceRoot) => {
+      await writeFile(path.join(workspaceRoot, 'source.ts'), 'export const value = 1;\n');
+      await writeFile(path.join(workspaceRoot, 'rstest.config.js'), 'export default {};\n');
+
+      const result = await client.callTool({
+        name: 'related_tests',
+        arguments: { related: ['source.ts'] },
+      });
+
+      expect(result.isError, JSON.stringify(result)).not.toBe(true);
+      expect(result.structuredContent).toEqual({
+        producer: 'rstest',
+        packageRoot: '.',
+        sources: ['source.ts'],
+        testFiles: ['source.test.ts'],
+        total: 1,
+      });
+      expect(calls).toEqual([
+        {
+          filesOnly: true,
+          filters: [path.join(workspaceRoot, 'source.ts')],
+          related: true,
+        },
+      ]);
+      await expect(
+        client.callTool({ name: 'snapshot_list', arguments: { producer: 'rstest' } }),
+      ).resolves.toMatchObject({ structuredContent: { items: [] } });
+    },
+    {
+      testCaptureDependencies: {
+        createRstest: (instanceOptions) =>
+          Promise.resolve({
+            listTests: (listOptions) => {
+              calls.push(listOptions);
+              return Promise.resolve([
+                {
+                  project: 'default',
+                  testPath: path.join(instanceOptions?.cwd ?? '.', 'source.test.ts'),
+                  type: 'file',
+                },
+              ]);
+            },
+            run: () => {
+              throw new Error('must not run');
+            },
+          }),
+      },
+    },
+  );
+});
+
+test('rejects native test tools when the selected package has no Rstest config', async () => {
+  let createCalls = 0;
+  await withClient(
+    async (client) => {
+      const expected =
+        'Rstest is not configured for package root ".". Add a native rstest.config.* file supported by Rstest, or pass configPath.';
+
+      for (const request of [
+        { name: 'related_tests', arguments: { related: ['src/index.ts'] } },
+        { name: 'test_snapshot', arguments: {} },
+      ]) {
+        const result = await client.callTool(request);
+        expect(result.isError).toBe(true);
+        expect(result.content).toEqual([{ type: 'text', text: expected }]);
+      }
+
+      expect(createCalls).toBe(0);
+      await expect(
+        client.callTool({ name: 'project_status', arguments: {} }),
+      ).resolves.toMatchObject({ structuredContent: { contexts: [] } });
+    },
+    {
+      testCaptureDependencies: {
+        createRstest: async () => {
+          createCalls += 1;
+          throw new Error('must not create Rstest');
+        },
+      },
+    },
+  );
 });
 
 test('reports an empty checkout without requiring optional producers', async () => {
@@ -252,36 +451,27 @@ test('captures a real test snapshot through injected capture dependencies', asyn
     },
     {
       testCaptureDependencies: {
-        wrapperConfigPath: path.join(path.sep, 'wrapper', 'rstestConfig.js'),
+        loadConfig: ({ cwd = process.cwd(), path: configPath } = {}) =>
+          Promise.resolve({
+            content: {},
+            filePath: configPath ?? path.join(cwd, 'rstest.config.ts'),
+            dependencies: [],
+          }),
         createRunId: () => {
           captureCount += 1;
           return `run_mcp_${captureCount}`;
         },
         createSnapshotId: () => `snap_mcp_${captureCount}`,
-        runRstest: (options) => {
-          const testPath = path.join(
-            (options?.cwd as string | undefined) ?? '.',
-            (options?.files as string[] | undefined)?.[0] ?? 'tests/math.test.ts',
-          );
-          return Promise.resolve({
-            ok: true,
-            files: [
-              {
-                project: 'default',
-                testPath,
-                name: path.basename(testPath),
-                status: 'pass',
-                results: [{ project: 'default', testPath, name: 'adds', status: 'pass' }],
-              },
-            ],
-            stats: {
-              tests: { total: 1, passed: 1, failed: 0, skipped: 0, todo: 0 },
-              files: { total: 1, failed: 0 },
-            },
-            unhandledErrors: [],
-            duration: { total: 1 },
-          });
-        },
+        createRstest: ({ cwd = process.cwd() } = {}) =>
+          Promise.resolve({
+            listTests: () => Promise.resolve([]),
+            run: (options) =>
+              Promise.resolve(
+                createNativeTestResult(
+                  path.join(cwd, options?.filters?.[0] ?? 'tests/math.test.ts'),
+                ),
+              ),
+          }),
       },
     },
   );
@@ -311,10 +501,6 @@ test('captures a real lint snapshot through an injected capture adapter', async 
       });
     },
     {
-      lintCaptureAdapter: {
-        wrapperConfigPath: path.join(path.sep, 'wrapper', 'rslintConfig.js'),
-        withConfigTarget: (_configRoot, _configPath, action) => action(),
-      },
       createRslint: (options) => ({
         lintFiles: () =>
           Promise.resolve([
@@ -369,16 +555,6 @@ test('rejects capture targets that escape the checkout', async () => {
       ).resolves.toMatchObject({ structuredContent: { contexts: [] } });
     },
     {
-      testCaptureDependencies: {
-        wrapperConfigPath: path.join(path.sep, 'wrapper', 'rstestConfig.js'),
-        runRstest: () => {
-          throw new Error('must not run');
-        },
-      },
-      lintCaptureAdapter: {
-        wrapperConfigPath: path.join(path.sep, 'wrapper', 'rslintConfig.js'),
-        withConfigTarget: (_configRoot, _configPath, action) => action(),
-      },
       createRslint: () => {
         throw new Error('must not run');
       },

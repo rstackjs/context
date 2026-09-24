@@ -11,7 +11,6 @@ import {
   createExplicitRun,
   recordContextInputFiles,
   resolveExplicitCaptureTarget,
-  resolveInternalConfigPath,
 } from '../src/source.ts';
 import { withTempWorkspace } from './helpers.ts';
 
@@ -112,15 +111,6 @@ test('rejects capture targets that escape the checkout', async () => {
       resolveExplicitCaptureTarget(workspaceRoot, { packageRoot: 'packages/../packages/app' }),
     ).resolves.toEqual({ packageRoot: path.join(workspaceRoot, 'packages', 'app') });
   });
-});
-
-test('refuses to hand producers a bundled wrapper config that is absent', () => {
-  expect(() => resolveInternalConfigPath(import.meta.dirname, 'rstestConfig.js')).toThrow(
-    'The bundled wrapper config "rstestConfig.js" is not present',
-  );
-  expect(resolveInternalConfigPath(import.meta.dirname, 'helpers.ts')).toBe(
-    path.join(import.meta.dirname, 'helpers.ts'),
-  );
 });
 
 test('reports changed and missing inputs as stale in lexical order', async () => {

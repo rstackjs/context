@@ -11,10 +11,9 @@ export type {
 } from './model.ts';
 export {
   captureTestSnapshot,
+  listRelatedTests,
   listTestResults,
-  type RelatedTestRequest,
-  type ResolveRelatedTests,
-  type TestCaptureDependencies,
+  type RelatedTestSelection,
   type TestCaptureResult,
   type TestResultPage,
   type TestResultsQuery,

@@ -1,5 +1,7 @@
 // cspell:ignore modelcontextprotocol
+import { Writable } from 'node:stream';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import type { ContentBlock } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { readCodeEvidence, type CodeEvidenceResult } from './codeEvidence.ts';
@@ -9,7 +11,6 @@ import {
   captureLintSnapshot,
   getLintFixPreview,
   listDiagnostics,
-  type LintCaptureAdapter,
   type RslintFactory,
 } from './lint.ts';
 import { decodeCursor, encodeCursor } from './pagination.ts';
@@ -28,6 +29,7 @@ import { readProjectStatus } from './status.ts';
 import { readContextSnapshots } from './store.ts';
 import {
   captureTestSnapshot,
+  listRelatedTests,
   listTestResults,
   type TestCaptureDependencies,
   type TestSnapshotRequest,
@@ -366,6 +368,18 @@ const testSnapshotInput = z
   })
   .strict();
 
+const relatedTestsInput = z
+  .object({
+    related: z
+      .array(z.string().min(1))
+      .min(1)
+      .max(200)
+      .describe('Source paths resolved from packageRoot.'),
+    packageRoot: packageRootInput.optional(),
+    configPath: configPathInput.optional(),
+  })
+  .strict();
+
 const toMcpError = (error: unknown) => ({
   content: [
     {
@@ -542,7 +556,6 @@ type ContextMcpDependencies = {
   captureLintSnapshot?: typeof captureLintSnapshot;
   captureTestSnapshot?: typeof captureTestSnapshot;
   createRslint?: RslintFactory;
-  lintCaptureAdapter?: LintCaptureAdapter;
   testCaptureDependencies?: TestCaptureDependencies;
   serverVersion?: string;
 };
@@ -852,7 +865,33 @@ const createContextMcpServer = (
           workspaceRoot,
           request,
           dependencies.createRslint,
-          dependencies.lintCaptureAdapter,
+        );
+        return toStructuredMcpResult(result);
+      } catch (error) {
+        return toMcpError(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'related_tests',
+    {
+      title: 'List related tests',
+      description:
+        'Resolve statically related Rstest files through the selected package native configuration without executing test cases or writing a Context snapshot.',
+      inputSchema: relatedTestsInput,
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
+    },
+    async (input) => {
+      try {
+        const result = await listRelatedTests(
+          workspaceRoot,
+          input,
+          dependencies.testCaptureDependencies?.createRstest,
         );
         return toStructuredMcpResult(result);
       } catch (error) {
@@ -963,5 +1002,30 @@ const createContextMcpServer = (
   return server;
 };
 
-export { createContextMcpServer };
+const reserveStandardOutputForProtocol = (): Writable => {
+  const standardOutput = process.stdout;
+  const writeProtocol = standardOutput.write.bind(standardOutput);
+
+  Object.defineProperty(standardOutput, 'write', {
+    configurable: true,
+    value: process.stderr.write.bind(process.stderr),
+    writable: true,
+  });
+
+  return new Writable({
+    decodeStrings: false,
+    write(chunk, encoding, callback) {
+      if (writeProtocol(String(chunk), encoding)) callback();
+      else standardOutput.once('drain', callback);
+    },
+  });
+};
+
+const runContextMcpServer = async (workspaceRoot: string = process.cwd()): Promise<void> => {
+  process.execArgv = [];
+  const server = createContextMcpServer(workspaceRoot);
+  await server.connect(new StdioServerTransport(process.stdin, reserveStandardOutputForProtocol()));
+};
+
+export { createContextMcpServer, runContextMcpServer };
 export type { ContextMcpDependencies };

@@ -26,15 +26,14 @@ test('publishes focused Context entry points without a Rstack dependency', async
     './rsdoctor',
     './rslib',
     './rslint',
-    './rstack',
     './rstest',
+    './shared-config',
   ]);
-  // Consumers own this optional runtime so a host such as Rstack can pin a preview
-  // directly without turning it into a URL-resolved transitive dependency. This repo's
-  // root-only override still validates against web-infra-dev/rsdoctor#1903.
+  // Consumers own this optional runtime rather than receiving it as a
+  // URL-resolved transitive dependency.
   expect(packageJson.dependencies?.['@rsdoctor/agent-cli']).toBeUndefined();
-  expect(packageJson.devDependencies?.['@rsdoctor/agent-cli']).toBe('0.1.1');
-  expect(packageJson.peerDependencies?.['@rsdoctor/agent-cli']).toBe('>=0.1.1');
+  expect(packageJson.devDependencies?.['@rsdoctor/agent-cli']).toBe('0.1.2');
+  expect(packageJson.peerDependencies?.['@rsdoctor/agent-cli']).toBe('>=0.1.2');
   for (const section of [
     packageJson.dependencies,
     packageJson.devDependencies,
@@ -45,7 +44,7 @@ test('publishes focused Context entry points without a Rstack dependency', async
 });
 
 test('loads each focused Context entry point independently', () => {
-  const entryPoints = ['rsbuild', 'rslib', 'rstest', 'rslint', 'rsdoctor', 'mcp', 'rstack'];
+  const entryPoints = ['rsbuild', 'rslib', 'rstest', 'rslint', 'rsdoctor', 'mcp', 'shared-config'];
   const script = `await Promise.all(${JSON.stringify(entryPoints)}.map((name) => import('@rstackjs/context/' + name)));`;
   const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], {
     cwd: repositoryRoot,

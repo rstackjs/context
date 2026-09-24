@@ -1,5 +1,5 @@
 /* rslint-disable @typescript-eslint/no-unsafe-assignment -- Rstest asymmetric matchers are intentionally untyped. */
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { ConfigParams, RsbuildConfig } from '@rsbuild/core';
 import { expect, test } from '@rstest/core';
@@ -40,11 +40,17 @@ type ObserverHarness = {
 
 const getObserverHarness = (
   plugin: ReturnType<typeof createBuildContextPlugin>,
+  context?: {
+    configFile?: string;
+    configFileDependencies: readonly string[];
+    rootPath: string;
+  },
 ): ObserverHarness => {
   const hooks: ObserverHooks = {};
   const warnings: string[] = [];
 
   void plugin.setup?.({
+    ...(context === undefined ? {} : { context }),
     logger: {
       warn: (message: string) => {
         warnings.push(message);
@@ -697,6 +703,71 @@ test('records explicit build variants, normalized output paths, and partial conf
         },
         {
           path: 'rstack.config.ts',
+          digest: expect.stringMatching(/^[0-9a-f]{64}$/u),
+        },
+      ],
+    });
+  });
+});
+
+test('resolves workspace and config provenance from the native build context', async () => {
+  await withTempWorkspace('rstack-build-context-', async (workspaceRoot) => {
+    const canonicalWorkspaceRoot = await realpath(workspaceRoot);
+    const packageRoot = path.join(canonicalWorkspaceRoot, 'packages', 'app');
+    const configPath = path.join(packageRoot, 'rstack.config.ts');
+    const dependencyPath = path.join(packageRoot, 'config', 'shared.ts');
+    await mkdir(path.dirname(dependencyPath), { recursive: true });
+    await writeFile(
+      path.join(canonicalWorkspaceRoot, 'pnpm-workspace.yaml'),
+      'packages:\n  - packages/*\n',
+    );
+    await writeFile(path.join(packageRoot, 'package.json'), JSON.stringify({ name: '@repo/app' }));
+    await writeFile(configPath, 'export {}\n');
+    await writeFile(dependencyPath, 'export const shared = true;\n');
+
+    const plugin = createBuildContextPlugin({
+      producer: 'rsbuild',
+      product: 'application',
+      capture: 'metadata',
+      params: { command: 'build', env: 'production' },
+      createRunId: () => 'run_native_provenance',
+      now: () => new Date('2026-08-12T09:00:00.000Z'),
+    });
+    const { hooks } = getObserverHarness(plugin, {
+      rootPath: packageRoot,
+      configFile: configPath,
+      configFileDependencies: [dependencyPath, configPath, dependencyPath],
+    });
+    const environment = {
+      ...createEnvironment('web', 'web'),
+      distPath: path.join(packageRoot, 'dist'),
+    };
+
+    await hooks.beforeBuild?.({ environments: { web: environment } });
+    await invokeAfter(hooks, {
+      environment,
+      isFirstCompile: true,
+      isWatch: false,
+      stats: createStats({}),
+      time: 1,
+    });
+
+    const status = await readContextWorkspaceStatus(workspaceRoot);
+    expect(status.runs[0].run.contexts[0]).toMatchObject({
+      packageRoot: 'packages/app',
+      packageName: '@repo/app',
+      configPath: 'packages/app/rstack.config.ts',
+      distPath: 'packages/app/dist',
+    });
+    expect(status.runs[0].contexts[0].latestSnapshot!.source).toMatchObject({
+      inputCompleteness: 'partial',
+      inputs: [
+        {
+          path: 'packages/app/config/shared.ts',
+          digest: expect.stringMatching(/^[0-9a-f]{64}$/u),
+        },
+        {
+          path: 'packages/app/rstack.config.ts',
           digest: expect.stringMatching(/^[0-9a-f]{64}$/u),
         },
       ],

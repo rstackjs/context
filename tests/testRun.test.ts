@@ -1,23 +1,23 @@
 /* rslint-disable @typescript-eslint/no-unsafe-assignment -- Rstest asymmetric matchers are intentionally untyped. */
 import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { TestRunResult } from '@rstest/core/api';
 import { expect, test } from '@rstest/core';
+import type { ListedTest, ListOptions, RunOptions, TestRunResult } from '@rstest/core/api';
 import { listDiagnostics } from '../src/lint.ts';
 import { readProjectStatus } from '../src/status.ts';
 import { validateTestFacet } from '../src/records.ts';
 import { readContextSnapshotById } from '../src/store.ts';
 import {
   captureTestSnapshot,
+  listRelatedTests,
   listTestResults,
+  type CapturedTestRunResult,
   type TestCaptureDependencies,
   type TestSnapshotRequest,
 } from '../src/testRun.ts';
 import { withTempWorkspace } from './helpers.ts';
 
-const wrapperConfigPath = path.join(path.sep, 'wrapper', 'rstestConfig.js');
-
-const createResult = (overrides: Partial<TestRunResult> = {}): TestRunResult => ({
+const createResult = (overrides: Partial<CapturedTestRunResult> = {}): CapturedTestRunResult => ({
   ok: true,
   files: [],
   stats: {
@@ -29,17 +29,56 @@ const createResult = (overrides: Partial<TestRunResult> = {}): TestRunResult => 
   ...overrides,
 });
 
+const toNativeResult = (result: CapturedTestRunResult): TestRunResult => ({
+  status: result.unhandledErrors.length > 0 ? 'error' : result.ok ? 'pass' : 'fail',
+  results: result.files as TestRunResult['results'],
+  testResults: result.files.flatMap((file) => file.results) as TestRunResult['testResults'],
+  summary: result.stats,
+  duration: { totalTime: result.duration.total, buildTime: 0, testTime: result.duration.total },
+  snapshotSummary:
+    result.snapshot ??
+    ({
+      added: 0,
+      failure: false,
+      filesAdded: 0,
+      filesRemoved: 0,
+      filesRemovedList: [],
+      filesUnmatched: 0,
+      filesUpdated: 0,
+      matched: 0,
+      total: 0,
+      unchecked: 0,
+      uncheckedKeysByFile: [],
+      unmatched: 0,
+      updated: 0,
+      didUpdate: false,
+    } satisfies TestRunResult['snapshotSummary']),
+  unhandledErrors: result.unhandledErrors,
+  ...(result.coverage === undefined ? {} : { coverage: result.coverage }),
+});
+
 const createDependencies = (
-  result: TestRunResult,
+  result: CapturedTestRunResult,
   calls: unknown[],
   suffix: string,
+  listTests: (options?: ListOptions & RunOptions) => Promise<ListedTest[]> = () =>
+    Promise.resolve([]),
 ): TestCaptureDependencies => ({
   hasCoverageProvider: () => true,
-  wrapperConfigPath,
-  runRstest: (options) => {
-    calls.push(options);
-    return Promise.resolve(result);
-  },
+  loadConfig: ({ cwd = process.cwd(), path: configPath } = {}) =>
+    Promise.resolve({
+      content: {},
+      filePath: configPath ?? path.join(cwd, 'rstest.config.ts'),
+      dependencies: [],
+    }),
+  createRstest: () =>
+    Promise.resolve({
+      listTests,
+      run: (options) => {
+        calls.push(options);
+        return Promise.resolve(toNativeResult(result));
+      },
+    }),
   createRunId: () => `run_${suffix}`,
   createSnapshotId: () => `snap_${suffix}`,
   now: () => new Date('2026-08-12T08:00:00.000Z'),
@@ -58,7 +97,7 @@ test('keeps the coverage provider out of the published dependency surface', asyn
   // The Istanbul provider is resolved from the package under test, so declaring it as a
   // peer of this package could not satisfy the runtime lookup; it stays a dev-only dependency.
   expect(packageJson.dependencies?.['@rstest/coverage-istanbul']).toBeUndefined();
-  expect(packageJson.devDependencies?.['@rstest/coverage-istanbul']).toBe('0.11.6');
+  expect(packageJson.devDependencies?.['@rstest/coverage-istanbul']).toBe('0.12.1');
   expect(packageJson.peerDependencies?.['@rstest/coverage-istanbul']).toBeUndefined();
   expect(packageJson.peerDependenciesMeta?.['@rstest/coverage-istanbul']).toBeUndefined();
 
@@ -69,19 +108,61 @@ test('keeps the coverage provider out of the published dependency surface', asyn
   expect(packageJson.peerDependenciesMeta?.['@rsbuild/core']).toEqual({ optional: true });
 });
 
-test('does not run Rstest when the host reports that tests are not configured', async () => {
+test('rejects native test capture when no Rstest config exists', async () => {
   await withTempWorkspace('rstack-context-test-run-', async (workspaceRoot) => {
-    const calls: unknown[] = [];
-    const dependencies = {
-      ...createDependencies(createResult(), calls, 'not_configured'),
-      isTestConfigured: () => Promise.resolve(false),
-    } satisfies TestCaptureDependencies;
+    let createCalls = 0;
+    const createRstest = () => {
+      createCalls += 1;
+      throw new Error('must not create Rstest');
+    };
+    const message =
+      'Rstest is not configured for package root ".". Add a native rstest.config.* file supported by Rstest, or pass configPath.';
 
-    await expect(captureTestSnapshot(workspaceRoot, {}, dependencies)).rejects.toThrow(
-      'Rstest is not configured for package root ".". packageRoot is checkout-relative; call project_status and use context.packageRoot.',
-    );
-    expect(calls).toEqual([]);
+    await expect(captureTestSnapshot(workspaceRoot, {}, { createRstest })).rejects.toThrow(message);
+    await expect(
+      listRelatedTests(workspaceRoot, { related: ['src/index.ts'] }, createRstest),
+    ).rejects.toThrow(message);
+
+    expect(createCalls).toBe(0);
     await expect(readProjectStatus(workspaceRoot)).resolves.toMatchObject({ contexts: [] });
+  });
+});
+
+test('uses Rstest native config discovery for CommonJS config files', async () => {
+  await withTempWorkspace('rstack-context-test-run-', async (workspaceRoot) => {
+    const configPath = path.join(workspaceRoot, 'rstest.config.cjs');
+    const sourcePath = path.join(workspaceRoot, 'src', 'index.ts');
+    const testPath = path.join(workspaceRoot, 'src', 'index.test.ts');
+    await mkdir(path.dirname(sourcePath), { recursive: true });
+    await writeFile(configPath, 'module.exports = {};\n');
+    await writeFile(sourcePath, 'export const value = 1;\n');
+
+    const createCalls: unknown[] = [];
+    const result = await listRelatedTests(
+      workspaceRoot,
+      { related: ['src/index.ts'] },
+      (options) => {
+        createCalls.push(options);
+        return Promise.resolve({
+          listTests: () => Promise.resolve([{ project: 'default', testPath, type: 'file' }]),
+          run: () => {
+            throw new Error('must not run');
+          },
+        });
+      },
+    );
+
+    expect(createCalls).toEqual([
+      expect.objectContaining({
+        cwd: workspaceRoot,
+        config: expect.objectContaining({ filePath: configPath }),
+      }),
+    ]);
+    expect(result).toMatchObject({
+      sources: ['src/index.ts'],
+      testFiles: ['src/index.test.ts'],
+      total: 1,
+    });
   });
 });
 
@@ -141,9 +222,7 @@ test('captures one passing run with partial source freshness', async () => {
     });
     expect(calls).toEqual([
       {
-        cwd: workspaceRoot,
-        config: expect.stringMatching(/rstestConfig\.js$/u),
-        files: ['src/math.test.ts'],
+        filters: ['src/math.test.ts'],
         testNamePattern: 'adds',
       },
     ]);
@@ -197,6 +276,7 @@ test('captures one passing run with partial source freshness', async () => {
       contextId: expect.stringMatching(/^ctx_[0-9a-f]{24}$/u),
       packageRoot: '.',
       product: 'development',
+      configPath: 'rstest.config.ts',
       environment: 'test',
     });
 
@@ -223,7 +303,7 @@ test('resolves related source files before running and records the static test r
     await writeFile(sourcePath, 'export const value = 1;\n');
     await writeFile(testPath, 'test');
     const calls: unknown[] = [];
-    const relatedCalls: unknown[] = [];
+    const listCalls: unknown[] = [];
     const result = createResult({
       files: [
         {
@@ -243,27 +323,23 @@ test('resolves related source files before running and records the static test r
     const capture = await captureTestSnapshot(
       workspaceRoot,
       { packageRoot: 'packages/app', related: ['src/config.ts'] },
-      {
-        ...createDependencies(result, calls, 'related'),
-        resolveRelatedTests: (request) => {
-          relatedCalls.push(request);
-          return Promise.resolve([testPath]);
-        },
-      },
+      createDependencies(result, calls, 'related', (options) => {
+        listCalls.push(options);
+        return Promise.resolve([{ project: 'default', testPath, type: 'file' }]);
+      }),
     );
 
-    expect(relatedCalls).toEqual([
+    expect(listCalls).toEqual([
       {
-        packageRoot: path.join(workspaceRoot, 'packages/app'),
-        configPath: undefined,
-        sources: [sourcePath],
+        filesOnly: true,
+        filters: [sourcePath],
+        related: true,
       },
     ]);
     expect(calls).toEqual([
       {
-        cwd: path.join(workspaceRoot, 'packages/app'),
-        config: expect.stringMatching(/rstestConfig\.js$/u),
-        files: ['tests/config.test.ts'],
+        filters: [sourcePath],
+        related: true,
       },
     ]);
     const stored = await readContextSnapshotById(workspaceRoot, capture.snapshotId);
@@ -316,10 +392,9 @@ test('persists an actionable error snapshot when a related source file cannot be
       captureTestSnapshot(
         workspaceRoot,
         { related: ['src/missing.ts'] },
-        {
-          ...createDependencies(result, calls, 'unreadable'),
-          resolveRelatedTests: () => Promise.resolve([testPath]),
-        },
+        createDependencies(result, calls, 'unreadable', () =>
+          Promise.resolve([{ project: 'default', testPath, type: 'file' }]),
+        ),
       ),
     ).rejects.toMatchObject({
       name: 'TestInputError',
@@ -401,25 +476,21 @@ test('keeps the latest complete test results when a newer snapshot has unreadabl
         files: { total: 1, failed: 0 },
       },
     });
-    const resolveRelatedTests = () => Promise.resolve([testPath]);
-
     const complete = await captureTestSnapshot(
       workspaceRoot,
       { related: ['src/config.ts'] },
-      {
-        ...createDependencies(result, [], 'complete'),
-        resolveRelatedTests,
-      },
+      createDependencies(result, [], 'complete', () =>
+        Promise.resolve([{ project: 'default', testPath, type: 'file' }]),
+      ),
     );
     await unlink(sourcePath);
     await expect(
       captureTestSnapshot(
         workspaceRoot,
         { related: ['src/config.ts'] },
-        {
-          ...createDependencies(result, [], 'incomplete'),
-          resolveRelatedTests,
-        },
+        createDependencies(result, [], 'incomplete', () =>
+          Promise.resolve([{ project: 'default', testPath, type: 'file' }]),
+        ),
       ),
     ).rejects.toMatchObject({ name: 'TestInputError' });
 
@@ -438,28 +509,21 @@ test('keeps the latest complete test results when a newer snapshot has unreadabl
   });
 });
 
-test('reports a missing config adapter before writing any run manifest', async () => {
+test('runs through one native Rstest instance', async () => {
   await withTempWorkspace('rstack-context-test-run-', async (workspaceRoot) => {
-    await expect(captureTestSnapshot(workspaceRoot, {}, { wrapperConfigPath })).rejects.toThrow(
-      'Rstack test capture requires a config adapter.',
+    const calls: unknown[] = [];
+    const result = await captureTestSnapshot(
+      workspaceRoot,
+      {},
+      createDependencies(createResult(), calls, 'standalone'),
     );
-    await expect(
-      captureTestSnapshot(
-        workspaceRoot,
-        { related: ['src/a.ts'] },
-        {
-          runRstest: () => {
-            throw new Error('must not run');
-          },
-          wrapperConfigPath,
-        },
-      ),
-    ).rejects.toThrow('Rstack test capture requires a related-test resolver.');
 
-    await expect(readProjectStatus(workspaceRoot)).resolves.toMatchObject({ contexts: [] });
-    await expect(listDiagnostics(workspaceRoot)).rejects.toThrow(
-      'No matching completed context snapshot was found.',
-    );
+    expect(result.status).toBe('pass');
+    expect(calls).toEqual([{}]);
+
+    await expect(readProjectStatus(workspaceRoot)).resolves.toMatchObject({
+      contexts: [{ producer: 'rstest' }],
+    });
   });
 });
 
@@ -508,10 +572,7 @@ test('records an empty related selection without falling back to the full test s
     const capture = await captureTestSnapshot(
       workspaceRoot,
       { related: ['src/unused.ts'] },
-      {
-        ...createDependencies(createResult(), calls, 'unrelated'),
-        resolveRelatedTests: () => Promise.resolve([]),
-      },
+      createDependencies(createResult(), calls, 'unrelated'),
     );
 
     expect(calls).toEqual([]);
@@ -587,7 +648,7 @@ test('captures requested aggregate Istanbul execution evidence', async () => {
           b: {},
         },
       },
-    } as unknown as NonNullable<TestRunResult['coverage']>;
+    } as unknown as NonNullable<CapturedTestRunResult['coverage']>;
     const result = createResult({
       coverage,
       files: [
@@ -615,18 +676,14 @@ test('captures requested aggregate Istanbul execution evidence', async () => {
 
     expect(calls).toEqual([
       {
-        cwd: workspaceRoot,
-        config: expect.stringMatching(/rstestConfig\.js$/u),
-        inlineConfig: {
-          coverage: {
-            enabled: true,
-            provider: 'istanbul',
-            reporters: [],
-            reportOnFailure: true,
-            include: ['src/**/*.ts'],
-            exclude: ['src/**/*.test.ts'],
-            allowExternal: true,
-          },
+        coverage: {
+          enabled: true,
+          provider: 'istanbul',
+          reporters: [],
+          reportOnFailure: true,
+          include: ['src/**/*.ts'],
+          exclude: ['src/**/*.test.ts'],
+          allowExternal: true,
         },
       },
     ]);
@@ -763,16 +820,12 @@ test('records requested execution as unavailable when Rstest returns no coverage
 
     expect(calls).toEqual([
       {
-        cwd: workspaceRoot,
-        config: expect.stringMatching(/rstestConfig\.js$/u),
-        inlineConfig: {
-          coverage: {
-            enabled: true,
-            provider: 'istanbul',
-            reporters: [],
-            reportOnFailure: true,
-            allowExternal: false,
-          },
+        coverage: {
+          enabled: true,
+          provider: 'istanbul',
+          reporters: [],
+          reportOnFailure: true,
+          allowExternal: false,
         },
       },
     ]);
@@ -843,9 +896,7 @@ test('runs tests without coverage when the optional Istanbul provider is unavail
 
     expect(calls).toEqual([
       {
-        cwd: workspaceRoot,
-        config: expect.stringMatching(/rstestConfig\.js$/u),
-        files: ['src/math.test.ts'],
+        filters: ['src/math.test.ts'],
       },
     ]);
     expect(capture).toMatchObject({
@@ -893,7 +944,7 @@ test('persists partial execution evidence when a covered source path is unreadab
         f: {},
         b: {},
       },
-    } as unknown as NonNullable<TestRunResult['coverage']>;
+    } as unknown as NonNullable<CapturedTestRunResult['coverage']>;
     const result = createResult({
       files: [
         {
@@ -946,9 +997,9 @@ test('bounds requested execution selectors before invoking Rstest', async () => 
   await withTempWorkspace('rstack-context-test-run-', async (workspaceRoot) => {
     let called = false;
     const dependencies: TestCaptureDependencies = {
-      runRstest: () => {
+      createRstest: () => {
         called = true;
-        return Promise.resolve(createResult());
+        throw new Error('must not create Rstest');
       },
     };
 
@@ -971,9 +1022,9 @@ test('rejects malformed execution selectors before invoking Rstest', async () =>
   await withTempWorkspace('rstack-context-test-run-', async (workspaceRoot) => {
     let called = false;
     const dependencies: TestCaptureDependencies = {
-      runRstest: () => {
+      createRstest: () => {
         called = true;
-        return Promise.resolve(createResult());
+        throw new Error('must not create Rstest');
       },
     };
 
@@ -1028,7 +1079,7 @@ test('truncates aggregate execution files deterministically', async () => {
       { execution: {} },
       createDependencies(
         createResult({
-          coverage: coverage as NonNullable<TestRunResult['coverage']>,
+          coverage: coverage as NonNullable<CapturedTestRunResult['coverage']>,
         }),
         calls,
         'execution-truncated',
@@ -1320,13 +1371,22 @@ test('persists a thrown Rstest configuration error as a completed diagnostic sna
     const configError = new Error('configuration failed');
     configError.name = 'ConfigError';
     const dependencies: TestCaptureDependencies = {
-      wrapperConfigPath,
-      runRstest: async () => {
-        await expect(readProjectStatus(workspaceRoot)).resolves.toMatchObject({
-          contexts: [{ runId: 'run_thrown', state: 'pending' }],
-        });
-        throw configError;
-      },
+      loadConfig: ({ cwd = process.cwd(), path: configPath } = {}) =>
+        Promise.resolve({
+          content: {},
+          filePath: configPath ?? path.join(cwd, 'rstest.config.ts'),
+          dependencies: [],
+        }),
+      createRstest: () =>
+        Promise.resolve({
+          listTests: () => Promise.resolve([]),
+          run: async () => {
+            await expect(readProjectStatus(workspaceRoot)).resolves.toMatchObject({
+              contexts: [{ runId: 'run_thrown', state: 'pending' }],
+            });
+            throw configError;
+          },
+        }),
       createRunId: () => 'run_thrown',
       createSnapshotId: () => 'snap_thrown',
       now: () => new Date('2026-08-12T08:00:00.000Z'),
@@ -1489,7 +1549,7 @@ test('pages project-qualified results in deterministic identity order', async ()
   });
 });
 
-const nestedCause = (depth: number): TestRunResult['unhandledErrors'][number] => ({
+const nestedCause = (depth: number): CapturedTestRunResult['unhandledErrors'][number] => ({
   name: `Cause${depth}`,
   message: `cause ${depth}`,
   ...(depth === 0 ? {} : { cause: nestedCause(depth - 1) }),

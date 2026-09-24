@@ -1,6 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import type { RunRstestOptions, TestRunResult } from '@rstest/core/api';
+import {
+  createRstest,
+  type CreateRstestOptions,
+  type ListedTest,
+  type RstestInstance,
+  type RunOptions,
+  type TestRunResult as NativeTestRunResult,
+} from '@rstest/core/api';
+import type { loadConfig as loadRstestConfig } from '@rstest/core';
 import {
   contextStoreSchemaVersion,
   type ContextFreshness,
@@ -28,8 +36,6 @@ import {
   createExplicitContextDescriptor,
   createExplicitRun,
   resolveExplicitCaptureTarget,
-  resolveInternalConfigPath,
-  type ConfigTargetRunner,
 } from './source.ts';
 import {
   readContextSnapshotById,
@@ -85,34 +91,57 @@ type TestCaptureResult = {
   unreadableInputs?: string[];
 };
 
+type RelatedTestSelection = {
+  producer: 'rstest';
+  packageRoot: string;
+  sources: string[];
+  testFiles: string[];
+  total: number;
+};
+
 type TestCaptureError = TestErrorRecord & {
   scope: 'file' | 'run';
   project?: string;
   path?: string;
 };
 
-type RunRstest = (options?: RunRstestOptions) => Promise<TestRunResult>;
-
-type RelatedTestRequest = {
-  packageRoot: string;
-  configPath?: string;
-  sources: string[];
+type CapturedTestError = NativeTestRunResult['unhandledErrors'][number] & {
+  cause?: CapturedTestError;
 };
 
-type ResolveRelatedTests = (request: RelatedTestRequest) => Promise<string[]>;
+type CapturedTestCase = Omit<
+  NativeTestRunResult['testResults'][number],
+  'errors' | 'retryErrors' | 'testId'
+> & {
+  testId?: string;
+  errors?: CapturedTestError[];
+  retryErrors?: CapturedTestError[];
+};
+
+type CapturedTestFile = CapturedTestCase & {
+  results: CapturedTestCase[];
+};
+
+type CapturedTestRunResult = {
+  ok: boolean;
+  files: CapturedTestFile[];
+  stats: NativeTestRunResult['summary'];
+  unhandledErrors: CapturedTestError[];
+  duration: { total: number };
+  snapshot?: NativeTestRunResult['snapshotSummary'];
+  coverage?: NativeTestRunResult['coverage'];
+};
+
+type RstestRuntime = Pick<RstestInstance, 'listTests' | 'run'>;
+type CreateRstestRuntime = (options?: CreateRstestOptions) => Promise<RstestRuntime>;
+type LoadRstestConfig = typeof loadRstestConfig;
 
 type TestCaptureDependencies = {
-  runRstest?: RunRstest;
+  createRstest?: CreateRstestRuntime;
+  loadConfig?: LoadRstestConfig;
   createRunId?: () => string;
   createSnapshotId?: () => string;
   now?: () => Date;
-  wrapperConfigPath?: string;
-  withConfigTarget?: ConfigTargetRunner;
-  resolveRelatedTests?: ResolveRelatedTests;
-  isTestConfigured?: (target: {
-    packageRoot: string;
-    configPath?: string;
-  }) => boolean | Promise<boolean>;
   hasCoverageProvider?: (packageRoot: string) => boolean | Promise<boolean>;
 };
 
@@ -126,11 +155,8 @@ const optionalString = <K extends keyof TestErrorRecord>(
 // still attacker/author controlled, so capture truncates rather than trusting the producer.
 const maxErrorCauseDepth = 8;
 
-const normalizeError = (
-  error: TestRunResult['unhandledErrors'][number],
-  depth = 0,
-): TestErrorRecord => ({
-  name: error.name,
+const normalizeError = (error: CapturedTestError, depth = 0): TestErrorRecord => ({
+  name: error.name ?? 'Error',
   message: error.message,
   ...optionalString('stack', error.stack),
   ...optionalString('diff', error.diff),
@@ -142,12 +168,9 @@ const normalizeError = (
     : { cause: normalizeError(error.cause, depth + 1) }),
 });
 
-const normalizeErrors = (
-  errors: ReadonlyArray<TestRunResult['unhandledErrors'][number]>,
-): TestErrorRecord[] => errors.map((error) => normalizeError(error));
+const normalizeErrors = (errors: ReadonlyArray<CapturedTestError>): TestErrorRecord[] =>
+  errors.map((error) => normalizeError(error));
 
-// Task metadata is free-form producer data. It is stored only when the whole value is JSON-safe,
-// and object keys are sorted so a re-capture of identical metadata serializes byte-identically.
 const maxMetaDepth = 8;
 
 const normalizeMetaValue = (value: unknown, depth: number): JsonValue | undefined => {
@@ -187,7 +210,7 @@ const compareTestCases = (left: TestCaseRecord, right: TestCaseRecord): number =
 
 const normalizeTestCase = (
   workspaceRoot: string,
-  result: TestRunResult['files'][number]['results'][number],
+  result: CapturedTestRunResult['files'][number]['results'][number],
 ): TestCaseRecord => ({
   project: result.project,
   path: toWorkspacePath(workspaceRoot, result.testPath),
@@ -203,7 +226,7 @@ const normalizeTestCase = (
 
 const normalizeTestFile = (
   workspaceRoot: string,
-  result: TestRunResult['files'][number],
+  result: CapturedTestRunResult['files'][number],
 ): TestFileRecord => ({
   project: result.project,
   path: toWorkspacePath(workspaceRoot, result.testPath),
@@ -217,7 +240,7 @@ const normalizeTestFile = (
 
 const normalizeTestFacet = (
   workspaceRoot: string,
-  result: TestRunResult,
+  result: CapturedTestRunResult,
   relation?: TestFacet['relation'],
 ): TestFacet => ({
   producer: 'rstest',
@@ -246,7 +269,7 @@ const testCaptureSelection = (request: TestSnapshotRequest): JsonValue => ({
   ...(request.testNamePattern === undefined ? {} : { testNamePattern: request.testNamePattern }),
 });
 
-const getRunStatus = (result: TestRunResult): ContextRunStatus => {
+const getRunStatus = (result: CapturedTestRunResult): ContextRunStatus => {
   if (result.unhandledErrors.length > 0) return 'error';
   return result.ok ? 'pass' : 'fail';
 };
@@ -255,16 +278,102 @@ const ensureWritten = (result: Awaited<ReturnType<typeof writeContextSnapshot>>)
   if (!result.written) throw result.error;
 };
 
-const loadRunRstest = async (): Promise<RunRstest> => (await import('@rstest/core/api')).runRstest;
+const normalizeNativeTestRun = (result: NativeTestRunResult): CapturedTestRunResult => ({
+  ok: result.status === 'pass',
+  files: result.results,
+  stats: result.summary,
+  unhandledErrors: result.unhandledErrors,
+  duration: { total: result.duration.totalTime },
+  snapshot: result.snapshotSummary,
+  ...(result.coverage === undefined ? {} : { coverage: result.coverage }),
+});
+
+const createRstestNotConfiguredError = (workspaceRoot: string, packageRoot: string): Error => {
+  const relativePackageRoot = toWorkspacePath(workspaceRoot, packageRoot) || '.';
+  return new Error(
+    `Rstest is not configured for package root "${relativePackageRoot}". Add a native rstest.config.* file supported by Rstest, or pass configPath.`,
+  );
+};
+
+const loadNativeRstestConfig = async (
+  workspaceRoot: string,
+  packageRoot: string,
+  configPath: string | undefined,
+  loadConfig?: LoadRstestConfig,
+): Promise<Awaited<ReturnType<(typeof import('@rstest/core'))['loadConfig']>>> => {
+  const loader =
+    loadConfig ??
+    (await (async () => {
+      const moduleName = '@rstest/core';
+      return (await import(moduleName)).loadConfig;
+    })());
+  const config = await loader({
+    cwd: packageRoot,
+    ...(configPath === undefined ? {} : { path: configPath }),
+  });
+  if (config.filePath === null) {
+    throw createRstestNotConfiguredError(workspaceRoot, packageRoot);
+  }
+  return config;
+};
+
+const createNativeRstest = async (
+  workspaceRoot: string,
+  packageRoot: string,
+  configPath: string | undefined,
+  factory: CreateRstestRuntime = createRstest,
+  loadConfig?: LoadRstestConfig,
+): Promise<{ configPath: string; runtime: RstestRuntime }> => {
+  const config = await loadNativeRstestConfig(workspaceRoot, packageRoot, configPath, loadConfig);
+  return {
+    configPath: config.filePath!,
+    runtime: await factory({ cwd: packageRoot, config }),
+  };
+};
+
+const relatedTestFiles = (tests: ListedTest[]): string[] => [
+  ...new Set(tests.map(({ testPath }) => testPath)),
+];
+
+const listRelatedTests = async (
+  workspaceRoot: string,
+  request: Pick<TestSnapshotRequest, 'packageRoot' | 'configPath'> & {
+    related: string[];
+  },
+  factory?: CreateRstestRuntime,
+): Promise<RelatedTestSelection> => {
+  validateRelatedSelection(request);
+  const target = await resolveExplicitCaptureTarget(workspaceRoot, request);
+  const { runtime } = await createNativeRstest(
+    workspaceRoot,
+    target.packageRoot,
+    target.configPath,
+    factory,
+  );
+  const sources = [
+    ...new Set(request.related.map((source) => path.resolve(target.packageRoot, source))),
+  ];
+  const testFiles = relatedTestFiles(
+    await runtime.listTests({
+      filesOnly: true,
+      filters: sources,
+      related: true,
+    }),
+  );
+  const packageRoot = toWorkspacePath(workspaceRoot, target.packageRoot) || '.';
+  return {
+    producer: 'rstest',
+    packageRoot,
+    sources: sources.map((source) => toWorkspacePath(workspaceRoot, source)).sort(),
+    testFiles: testFiles.map((file) => toWorkspacePath(workspaceRoot, file)).sort(),
+    total: testFiles.length,
+  };
+};
 
 const loadCoverageProviderLoader = async (): Promise<
   typeof import('@rstest/core/internal/browser').loadCoverageProvider
 > => (await import('@rstest/core/internal/browser')).loadCoverageProvider;
 
-// Detection runs Rstest's own provider loader against the package under test, which is exactly
-// what `addCoveragePlugin` does when coverage is enabled, so this probe cannot disagree with the
-// resolution the run itself will perform. It imports the provider module (not just resolves it),
-// so a provider that fails to evaluate is reported as absent rather than crashing the capture.
 const hasCoverageProvider = async (packageRoot: string): Promise<boolean> => {
   try {
     const loadCoverageProvider = await loadCoverageProviderLoader();
@@ -289,19 +398,7 @@ const validateRelatedSelection = (request: TestSnapshotRequest): void => {
   }
 };
 
-const validateTestCaptureWiring = (
-  request: TestSnapshotRequest,
-  dependencies: TestCaptureDependencies,
-): void => {
-  if (request.related !== undefined && dependencies.resolveRelatedTests === undefined) {
-    throw new Error('Rstack test capture requires a related-test resolver.');
-  }
-  if (dependencies.withConfigTarget === undefined && dependencies.runRstest === undefined) {
-    throw new Error('Rstack test capture requires a config adapter.');
-  }
-};
-
-const emptyTestRunResult = (): TestRunResult => ({
+const emptyTestRunResult = (): CapturedTestRunResult => ({
   ok: true,
   files: [],
   stats: {
@@ -319,47 +416,23 @@ const captureTestSnapshot = async (
 ): Promise<TestCaptureResult> => {
   validateExecutionRequest(request.execution);
   validateRelatedSelection(request);
-  validateTestCaptureWiring(request, dependencies);
   const target = await resolveExplicitCaptureTarget(workspaceRoot, request);
-  if (
-    dependencies.isTestConfigured !== undefined &&
-    !(await dependencies.isTestConfigured({
-      packageRoot: target.packageRoot,
-      ...(target.configPath === undefined ? {} : { configPath: target.configPath }),
-    }))
-  ) {
-    const packageRoot = toWorkspacePath(workspaceRoot, target.packageRoot) || '.';
-    throw new Error(
-      `Rstest is not configured for package root "${packageRoot}". packageRoot is checkout-relative; call project_status and use context.packageRoot.`,
-    );
-  }
-  const wrapperConfigPath =
-    dependencies.wrapperConfigPath ??
-    resolveInternalConfigPath(import.meta.dirname, 'rstestConfig.js');
+  const { configPath, runtime } = await createNativeRstest(
+    workspaceRoot,
+    target.packageRoot,
+    target.configPath,
+    dependencies.createRstest,
+    dependencies.loadConfig,
+  );
   const execution = request.execution;
   const captureExecution =
     execution !== undefined &&
     (await (dependencies.hasCoverageProvider ?? hasCoverageProvider)(target.packageRoot));
-  const executionOptions =
-    execution === undefined || !captureExecution
-      ? {}
-      : {
-          inlineConfig: {
-            coverage: {
-              enabled: true,
-              provider: 'istanbul' as const,
-              reporters: [],
-              reportOnFailure: true,
-              ...(execution.include === undefined ? {} : { include: execution.include }),
-              ...(execution.exclude === undefined ? {} : { exclude: execution.exclude }),
-              allowExternal: execution.allowExternal ?? false,
-            },
-          },
-        };
   const context = createExplicitContextDescriptor({
     producer: 'rstest',
     workspaceRoot,
     ...target,
+    configPath,
   });
   const captureSelection = testCaptureSelection(request);
   const now = dependencies.now ?? (() => new Date());
@@ -371,24 +444,21 @@ const captureTestSnapshot = async (
     now,
   });
   ensureWritten(await writeContextRunManifest(workspaceRoot, run));
-  let result: TestRunResult | undefined;
+  let result: CapturedTestRunResult | undefined;
   let relation: TestFacet['relation'];
   try {
     let selectedFiles = request.files;
-    if (request.related !== undefined && dependencies.resolveRelatedTests !== undefined) {
-      const resolveRelatedTests = dependencies.resolveRelatedTests;
+    if (request.related !== undefined) {
       const sourceFiles = [
         ...new Set(request.related.map((source) => path.resolve(target.packageRoot, source))),
       ];
-      const testFiles = [
-        ...new Set(
-          await resolveRelatedTests({
-            packageRoot: target.packageRoot,
-            configPath: target.configPath,
-            sources: sourceFiles,
-          }),
-        ),
-      ];
+      const testFiles = relatedTestFiles(
+        await runtime.listTests({
+          filesOnly: true,
+          filters: sourceFiles,
+          related: true,
+        }),
+      );
       relation = {
         sources: sourceFiles.map((source) => toWorkspacePath(workspaceRoot, source)).sort(),
         testFiles: testFiles.map((file) => toWorkspacePath(workspaceRoot, file)).sort(),
@@ -398,20 +468,33 @@ const captureTestSnapshot = async (
     }
 
     if (result === undefined) {
-      const runRstest = dependencies.runRstest ?? (await loadRunRstest());
-      const withConfigTarget =
-        dependencies.withConfigTarget ?? (async (_configRoot, _configPath, action) => action());
-      result = await withConfigTarget(target.packageRoot, target.configPath, () =>
-        runRstest({
-          cwd: target.packageRoot,
-          config: wrapperConfigPath,
-          ...executionOptions,
-          ...(selectedFiles === undefined ? {} : { files: selectedFiles }),
-          ...(request.testNamePattern === undefined
+      const runOptions: RunOptions = {
+        ...(request.related === undefined
+          ? selectedFiles === undefined
             ? {}
-            : { testNamePattern: request.testNamePattern }),
-        }),
-      );
+            : { filters: selectedFiles }
+          : {
+              filters: request.related.map((source) => path.resolve(target.packageRoot, source)),
+              related: true,
+            }),
+        ...(request.testNamePattern === undefined
+          ? {}
+          : { testNamePattern: request.testNamePattern }),
+        ...(execution === undefined || !captureExecution
+          ? {}
+          : {
+              coverage: {
+                enabled: true,
+                provider: 'istanbul',
+                reporters: [],
+                reportOnFailure: true,
+                ...(execution.include === undefined ? {} : { include: execution.include }),
+                ...(execution.exclude === undefined ? {} : { exclude: execution.exclude }),
+                allowExternal: execution.allowExternal ?? false,
+              },
+            }),
+      };
+      result = normalizeNativeTestRun(await runtime.run(runOptions));
     }
   } catch (error) {
     const capturedError: TestErrorRecord =
@@ -643,13 +726,14 @@ const listTestResults = async (
   };
 };
 
-export { captureTestSnapshot, listTestResults };
+export { captureTestSnapshot, listRelatedTests, listTestResults };
 export type {
+  CapturedTestRunResult,
+  CreateRstestRuntime,
+  RelatedTestSelection,
   TestCaptureDependencies,
   TestCaptureError,
   TestCaptureResult,
-  RelatedTestRequest,
-  ResolveRelatedTests,
   TestResultPage,
   TestResultsQuery,
   TestSnapshotRequest,

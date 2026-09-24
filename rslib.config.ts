@@ -12,7 +12,7 @@ export default defineConfig({
       rsdoctor: './src/rsdoctor.ts',
       rslib: './src/rslib.ts',
       rslint: './src/rslint.ts',
-      rstack: './src/rstack.ts',
+      sharedConfig: './src/sharedConfig.ts',
       rstest: './src/rstest.ts',
     },
     define: {
