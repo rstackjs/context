@@ -1,9 +1,19 @@
 /* rslint-disable @typescript-eslint/no-unsafe-assignment -- Rstest asymmetric matchers are intentionally untyped. */
-import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, symlink, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import type {
+  RsbuildPlugin,
+  RsbuildPluginAPI,
+  TransformContext,
+  TransformHandler,
+} from '@rsbuild/core';
 import { expect, test } from '@rstest/core';
 import type { ListedTest, ListOptions, RunOptions, TestRunResult } from '@rstest/core/api';
 import { listDiagnostics } from '../src/lint.ts';
+import { readCodeEvidence } from '../src/codeEvidence.ts';
+import { sha256Hex } from '../src/guards.ts';
+import { createExecutionSourcePlugin, normalizeExecutionFacet } from '../src/execution.ts';
 import { readProjectStatus } from '../src/status.ts';
 import { validateTestFacet } from '../src/records.ts';
 import { readContextSnapshotById } from '../src/store.ts';
@@ -71,14 +81,30 @@ const createDependencies = (
       filePath: configPath ?? path.join(cwd, 'rstest.config.ts'),
       dependencies: [],
     }),
-  createRstest: () =>
-    Promise.resolve({
+  createRstest: async (options) => {
+    let transform: TransformHandler<true> | undefined;
+    const config = options?.config;
+    if (config !== undefined && 'content' in config) {
+      const plugin = config.content.plugins?.at(-1) as RsbuildPlugin | undefined;
+      await plugin?.setup({
+        transform: (_descriptor, handler) => {
+          transform = handler as TransformHandler<true>;
+        },
+      } as RsbuildPluginAPI);
+    }
+    return {
       listTests,
-      run: (options) => {
+      run: async (options) => {
+        for (const resourcePath of Object.keys(result.coverage ?? {})) {
+          const code = await readFile(resourcePath).catch(() => undefined);
+          if (code !== undefined)
+            await transform?.({ code, resourcePath } as TransformContext<true>);
+        }
         calls.push(options);
-        return Promise.resolve(toNativeResult(result));
+        return toNativeResult(result);
       },
-    }),
+    };
+  },
   createRunId: () => `run_${suffix}`,
   createSnapshotId: () => `snap_${suffix}`,
   now: () => new Date('2026-08-12T08:00:00.000Z'),
@@ -1721,4 +1747,132 @@ type UnsupportedRequestFields = AssertNever<
 test('keeps unsupported execution controls out of snapshot requests', () => {
   const unsupportedRequestField = undefined as UnsupportedRequestFields;
   expect(unsupportedRequestField).toBeUndefined();
+});
+
+test.each(['single', 'inline', 'file', 'mixed'] as const)(
+  'binds execution to compiled sources when a test edits its input (projects: %s)',
+  async (projects) => {
+    await withTempWorkspace('rstack-context-execution-', async (temporaryRoot) => {
+      const workspaceRoot = await realpath(temporaryRoot);
+      await symlink(
+        fileURLToPath(new URL('../node_modules', import.meta.url)),
+        path.join(workspaceRoot, 'node_modules'),
+      );
+      await writeFile(path.join(workspaceRoot, 'package.json'), '{"type":"module"}');
+      await writeFile(
+        path.join(workspaceRoot, 'rstest.config.mjs'),
+        projects === 'single'
+          ? 'export default { include: ["src/*.test.ts"] };'
+          : projects === 'inline'
+            ? 'export default { projects: [{ name: "app", include: ["src/*.test.ts"] }] };'
+            : projects === 'file'
+              ? 'export default { projects: ["./project.config.mjs"] };'
+              : 'export default { projects: ["./project.config.mjs", {name: "inline", include: ["src/*.test.ts"]}] };',
+      );
+      await writeFile(
+        path.join(workspaceRoot, 'project.config.mjs'),
+        'export default { name: "external", include: ["src/*.test.ts"] };',
+      );
+      await mkdir(path.join(workspaceRoot, 'src'));
+      const sourcePath = path.join(workspaceRoot, 'src/math.ts');
+      const originalSource = 'export function math() { return 1; }\n';
+      await writeFile(sourcePath, originalSource);
+      const testPath = path.join(workspaceRoot, 'src/math.test.ts');
+      const testSource = `import { test, expect } from '@rstest/core';
+import { writeFileSync } from 'node:fs';
+import { math } from './math';
+test('math', () => { expect(math()).toBe(1); EDIT_SOURCE });`;
+      await writeFile(testPath, testSource.replace('EDIT_SOURCE', ''));
+      const request = { related: ['src/math.ts'], execution: { include: ['src/math.ts'] } };
+      const initial = await captureTestSnapshot(workspaceRoot, request);
+      expect(initial.status).toBe('pass');
+      const unbound = projects === 'file' || projects === 'mixed';
+      await expect(
+        readCodeEvidence(workspaceRoot, {
+          path: 'src/math.ts',
+          testSnapshotId: initial.snapshotId,
+        }),
+      ).resolves.toMatchObject({
+        executionCoverage: unbound
+          ? { state: 'unknown', reason: 'digest-unavailable' }
+          : { state: 'observed', fileDigest: sha256Hex(originalSource) },
+      });
+
+      await writeFile(
+        testPath,
+        testSource.replace(
+          'EDIT_SOURCE',
+          `writeFileSync(${JSON.stringify(sourcePath)}, 'export function math() { return 2; }\\n');`,
+        ),
+      );
+      const edited = await captureTestSnapshot(workspaceRoot, request);
+      expect(edited.status).toBe('pass');
+      expect(edited.freshness).toEqual(
+        unbound
+          ? { state: 'partial', changedPaths: [] }
+          : { state: 'stale', changedPaths: ['src/math.ts'] },
+      );
+      await expect(
+        readCodeEvidence(workspaceRoot, { path: 'src/math.ts', testSnapshotId: edited.snapshotId }),
+      ).resolves.toMatchObject({
+        executionCoverage: {
+          state: 'unknown',
+          reason: unbound ? 'digest-unavailable' : 'digest-mismatch',
+          fileDigest: unbound ? undefined : sha256Hex(originalSource),
+        },
+      });
+    });
+  },
+  15_000,
+);
+
+test('leaves coverage unbound when compiled source bytes are absent or conflict', async () => {
+  await withTempWorkspace('rstack-context-execution-', async (workspaceRoot) => {
+    const sourcePath = path.join(workspaceRoot, 'source.ts');
+    await writeFile(sourcePath, 'export const value = 2;');
+    const coverage = {
+      [sourcePath]: {
+        path: sourcePath,
+        statementMap: { '0': { start: { line: 1, column: 0 }, end: { line: 1, column: 23 } } },
+        fnMap: {},
+        branchMap: {},
+        s: { '0': 1 },
+        f: {},
+        b: {},
+      },
+    } as NonNullable<CapturedTestRunResult['coverage']>;
+    const digests = new Map<string, string | undefined>();
+    let transform: TransformHandler<true> | undefined;
+    await createExecutionSourcePlugin(digests).setup({
+      transform: (_descriptor, handler) => {
+        transform = handler as TransformHandler<true>;
+      },
+    } as RsbuildPluginAPI);
+    const absent = await normalizeExecutionFacet(
+      workspaceRoot,
+      workspaceRoot,
+      {},
+      coverage,
+      digests,
+    );
+    expect(absent.files[0]?.digest).toBeUndefined();
+    expect(absent.universe.completeness).toBe('partial');
+
+    for (const value of [1, 2, 2]) {
+      await transform!({
+        resourcePath: sourcePath,
+        code: Buffer.from(`export const value = ${value};`),
+      } as TransformContext<true>);
+    }
+    const conflicting = await normalizeExecutionFacet(
+      workspaceRoot,
+      workspaceRoot,
+      {},
+      coverage,
+      digests,
+    );
+    expect(conflicting.files[0]?.digest).toBeUndefined();
+    expect(conflicting.universe.completeness).toBe('partial');
+    expect(conflicting.files[0]?.statements[0]?.hits).toBe(1);
+  });
 });

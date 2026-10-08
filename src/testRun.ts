@@ -22,6 +22,7 @@ import {
   type TestFileRecord,
 } from './model.ts';
 import {
+  createExecutionSourcePlugin,
   normalizeExecutionFacet,
   unavailableExecutionFacet,
   validateExecutionRequest,
@@ -323,8 +324,30 @@ const createNativeRstest = async (
   configPath: string | undefined,
   factory: CreateRstestRuntime = createRstest,
   loadConfig?: LoadRstestConfig,
+  sourceDigests?: Map<string, string | undefined>,
 ): Promise<{ configPath: string; runtime: RstestRuntime }> => {
   const config = await loadNativeRstestConfig(workspaceRoot, packageRoot, configPath, loadConfig);
+  // File/glob projects are loaded internally by Rstest and cannot receive this observer.
+  // Do not bind aggregate coverage using only a subset of the participating projects.
+  if (
+    sourceDigests !== undefined &&
+    !config.content.projects?.some((project) => typeof project === 'string')
+  ) {
+    const plugin = createExecutionSourcePlugin(sourceDigests);
+    config.content = {
+      ...config.content,
+      plugins: [...(config.content.plugins ?? []), plugin],
+      ...(config.content.projects === undefined
+        ? {}
+        : {
+            projects: config.content.projects.map((project) =>
+              typeof project === 'string'
+                ? project
+                : { ...project, plugins: [...(project.plugins ?? []), plugin] },
+            ),
+          }),
+    };
+  }
   return {
     configPath: config.filePath!,
     runtime: await factory({ cwd: packageRoot, config }),
@@ -417,12 +440,14 @@ const captureTestSnapshot = async (
   validateExecutionRequest(request.execution);
   validateRelatedSelection(request);
   const target = await resolveExplicitCaptureTarget(workspaceRoot, request);
+  const sourceDigests = new Map<string, string | undefined>();
   const { configPath, runtime } = await createNativeRstest(
     workspaceRoot,
     target.packageRoot,
     target.configPath,
     dependencies.createRstest,
     dependencies.loadConfig,
+    request.execution === undefined ? undefined : sourceDigests,
   );
   const execution = request.execution;
   const captureExecution =
@@ -552,6 +577,7 @@ const captureTestSnapshot = async (
             target.packageRoot,
             execution,
             result.coverage,
+            sourceDigests,
           );
   const recording = await collectContextInputFiles(workspaceRoot, [
     ...new Set([

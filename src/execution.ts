@@ -1,5 +1,5 @@
-import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import type { RsbuildPlugin } from '@rsbuild/core';
 import type { TestRunResult } from '@rstest/core/api';
 import type { CoverageMapData } from '@rstest/core/internal/browser';
 import type {
@@ -26,6 +26,20 @@ type TestExecutionRequest = {
   exclude?: string[];
   allowExternal?: boolean;
 };
+
+const createExecutionSourcePlugin = (digests: Map<string, string | undefined>): RsbuildPlugin => ({
+  name: 'rstack-context:execution-sources',
+  setup(api) {
+    api.transform({ order: 'pre', raw: true }, ({ code, resourcePath }) => {
+      const digest = sha256Hex(code);
+      digests.set(
+        resourcePath,
+        digests.has(resourcePath) && digests.get(resourcePath) !== digest ? undefined : digest,
+      );
+      return code;
+    });
+  },
+});
 
 const executionBounds = {
   attribution: 'aggregate-run-only',
@@ -251,6 +265,7 @@ const normalizeExecutionFacet = async (
   packageRoot: string,
   request: TestExecutionRequest,
   coverage: TestRunResult['coverage'],
+  sourceDigests: ReadonlyMap<string, string | undefined>,
 ): Promise<TestExecutionFacet> => {
   if (!isRecordObject(coverage)) return unavailableExecutionFacet(request);
 
@@ -286,11 +301,9 @@ const normalizeExecutionFacet = async (
       functions: [],
       branches: [],
     };
-    try {
-      file.digest = sha256Hex(await readFile(candidate.absolutePath));
-    } catch {
-      readable = false;
-    }
+    const digest = sourceDigests.get(candidate.absolutePath);
+    if (digest === undefined) readable = false;
+    else file.digest = digest;
     let fileLocations = 0;
     for (const entry of candidate.entries) {
       if (
@@ -541,6 +554,7 @@ const validateExecutionFacet = (value: unknown): TestExecutionFacet | undefined 
 };
 
 export {
+  createExecutionSourcePlugin,
   normalizeExecutionFacet,
   unavailableExecutionFacet,
   validateExecutionFacet,

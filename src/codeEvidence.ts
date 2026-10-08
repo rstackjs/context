@@ -6,6 +6,7 @@ import { diagnosticsFromStoredSnapshot, type DiagnosticRecord } from './lint.ts'
 import type {
   ContextFreshness,
   ContextSnapshot,
+  LintFacet,
   StoredContextSnapshot,
   TestExecutionFacet,
   TestExecutionLocation,
@@ -110,7 +111,9 @@ const packageContainsPath = (packageRoot: string, sourcePath: string): boolean =
 };
 
 const lintSnapshotCapturedPath = (stored: StoredContextSnapshot, sourcePath: string): boolean =>
-  stored.snapshot.source?.inputs?.some((input) => input.path === sourcePath) === true ||
+  (stored.snapshot.facets.lint as LintFacet | undefined)?.files.some(
+    (file) => file.path === sourcePath,
+  ) === true ||
   diagnosticsFromStoredSnapshot(stored).some((diagnostic) => diagnostic.path === sourcePath);
 
 const selectSnapshot = async (

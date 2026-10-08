@@ -21,6 +21,7 @@ import {
   assessSnapshotFreshness,
   createExplicitContextDescriptor,
   createExplicitRun,
+  recordContextInputFiles,
   resolveExplicitCaptureTarget,
 } from './source.ts';
 import {
@@ -209,18 +210,34 @@ const lintCaptureSelection = (
         filePath: toWorkspacePath(workspaceRoot, path.resolve(packageRoot, request.filePath)),
       };
 
-const lintInputCompleteness = (
+const recordLintConfigInputs = (
   workspaceRoot: string,
   packageRoot: string,
-  patterns: string[],
-  files: LintFileRecord[],
-): 'complete' | 'partial' => {
-  const selectedPaths = new Set(
-    patterns.map((pattern) => toWorkspacePath(workspaceRoot, path.resolve(packageRoot, pattern))),
+  request: LintSnapshotRequest,
+) => {
+  if (request.configPath !== undefined) {
+    return recordContextInputFiles(workspaceRoot, [request.configPath]);
+  }
+  const directories = new Set<string>();
+  const targets = request.mode === 'text' ? [request.filePath] : (request.patterns ?? []);
+  for (let directory of [
+    packageRoot,
+    ...targets.map((target) => path.resolve(packageRoot, target)),
+  ]) {
+    while (directory === workspaceRoot || directory.startsWith(`${workspaceRoot}${path.sep}`)) {
+      directories.add(directory);
+      if (directory === workspaceRoot) break;
+      directory = path.dirname(directory);
+    }
+  }
+  return recordContextInputFiles(
+    workspaceRoot,
+    [...directories].flatMap((directory) =>
+      ['js', 'mjs', 'cjs', 'ts', 'mts', 'cts'].map((extension) =>
+        path.join(directory, `rslint.config.${extension}`),
+      ),
+    ),
   );
-  return selectedPaths.size === files.length && files.every((file) => selectedPaths.has(file.path))
-    ? 'complete'
-    : 'partial';
 };
 
 const ensureWritten = (result: Awaited<ReturnType<typeof writeContextSnapshot>>): void => {
@@ -237,6 +254,7 @@ const captureLintSnapshot = async (
 ): Promise<LintCaptureResult> => {
   const includeFixPreview = request.includeFixPreview ?? false;
   const target = await resolveExplicitCaptureTarget(workspaceRoot, request);
+  const configInputs = await recordLintConfigInputs(workspaceRoot, target.packageRoot, request);
   const context = createExplicitContextDescriptor({
     producer: 'rslint',
     workspaceRoot,
@@ -351,16 +369,16 @@ const captureLintSnapshot = async (
     request.mode === 'text'
       ? { virtualInputDigest: sha256Hex(request.code), captureSelection }
       : {
-          inputs: files.map(({ path: filePath, digest: fileDigest }) => ({
-            path: filePath,
-            digest: fileDigest,
-          })),
-          inputCompleteness: lintInputCompleteness(
-            workspaceRoot,
-            target.packageRoot,
-            request.patterns ?? ['.'],
-            files,
-          ),
+          inputs: [
+            ...new Map(
+              [
+                ...files.map(({ path: filePath, digest }) => ({ path: filePath, digest })),
+                ...configInputs,
+              ].map((input) => [input.path, input]),
+            ).values(),
+          ].sort((left, right) => compareStrings(left.path, right.path)),
+          // Rslint does not expose imported configs, nested discovery, or type dependencies.
+          inputCompleteness: 'partial',
           captureSelection,
         };
   const status: ContextRunStatus = totals.errors > 0 ? 'fail' : 'pass';

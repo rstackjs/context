@@ -383,6 +383,19 @@ Lint and test snapshots record input digests. Query results assess those inputs 
 workspace and report `fresh`, `stale`, `partial`, or `unknown` with changed paths where available.
 Build, lint, and test freshness remain independent.
 
+Execution digests come from source bytes observed during Rstest compilation. Files without a
+captured source version (including files reported only by coverage discovery or externalized
+modules) retain their coverage counts but cannot establish current-source execution evidence.
+Conflicting source versions within one capture also leave the digest unavailable.
+The source observer supports the root config and inline projects. When `projects` includes file
+paths or globs, Rstest loads those configs internally; aggregate coverage stays unbound rather
+than using digests from only some projects.
+
+Lint captures hash an explicit config, or config candidates along the selected file and package
+ancestor directories, before running Rslint. Lint freshness remains `partial` while recorded inputs
+match: Rslint does not expose a complete dependency set for imported configs, nested discovery, or
+type-aware rules. A change to a recorded source or config reports `stale`.
+
 `snapshot_diff` compares only compatible immutable snapshots:
 
 - the schema version must match;

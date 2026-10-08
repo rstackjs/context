@@ -5,6 +5,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { LintResult, RslintOptions } from '@rslint/core';
 import { beforeEach, expect, test } from '@rstest/core';
+import { readCodeEvidence } from '../src/codeEvidence.ts';
 import { captureLintSnapshot, getLintFixPreview, listDiagnostics } from '../src/lint.ts';
 import { contextStoreSchemaVersion, type ContextRunManifest } from '../src/model.ts';
 import { readProjectStatus } from '../src/status.ts';
@@ -525,7 +526,7 @@ test('returns snapshot provenance for an empty diagnostics page', async () => {
       contextId: capture.contextId,
       observedAt: stored?.snapshot.observedAt,
       completeness: { lint: 'complete' },
-      freshness: { state: 'fresh', changedPaths: [] },
+      freshness: { state: 'partial', changedPaths: [] },
       total: 0,
       items: [],
     });
@@ -877,3 +878,52 @@ test('persists a partial diagnostic snapshot when creating the lint engine throw
     expect(mocks.closeCalls).toBe(0);
   });
 });
+
+test.each(['explicit', 'discovered', 'ancestor', 'nested'] as const)(
+  'invalidates lint evidence when its %s config changes',
+  async (selection) => {
+    await withTempWorkspace('rstack-context-lint-config-', async (workspaceRoot) => {
+      const packageRoot = selection === 'ancestor' ? 'packages/app' : '.';
+      const sourcePath = selection === 'nested' ? 'src/index.ts' : 'index.ts';
+      const configPath =
+        selection === 'explicit'
+          ? 'custom.mjs'
+          : selection === 'nested'
+            ? 'src/rslint.config.mjs'
+            : 'rslint.config.mjs';
+      await mkdir(path.dirname(path.join(workspaceRoot, packageRoot, sourcePath)), {
+        recursive: true,
+      });
+      await writeFile(path.join(workspaceRoot, packageRoot, sourcePath), 'debugger;\n');
+      await writeFile(
+        path.join(workspaceRoot, configPath),
+        "export default [{ files: ['**/*.ts'], rules: { 'no-debugger': 'off' } }];\n",
+      );
+      const captured = await captureLintSnapshot(workspaceRoot, {
+        mode: 'files',
+        packageRoot,
+        patterns: [sourcePath],
+        ...(selection === 'explicit' ? { configPath } : {}),
+      });
+      expect(captured.status).toBe('pass');
+      expect(captured.freshness.state).toBe('partial');
+      if (selection === 'explicit' || selection === 'discovered') {
+        await expect(
+          readCodeEvidence(workspaceRoot, {
+            path: configPath,
+            lintSnapshotId: captured.snapshotId,
+          }),
+        ).rejects.toThrow('Selected Rslint snapshot did not capture the source path.');
+      }
+      await writeFile(
+        path.join(workspaceRoot, configPath),
+        "export default [{ files: ['**/*.ts'], rules: { 'no-debugger': 'error' } }];\n",
+      );
+      await expect(
+        listDiagnostics(workspaceRoot, { snapshotId: captured.snapshotId }),
+      ).resolves.toMatchObject({
+        freshness: { state: 'stale', changedPaths: [configPath] },
+      });
+    });
+  },
+);
