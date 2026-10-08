@@ -30,13 +30,24 @@ type TestExecutionRequest = {
 const createExecutionSourcePlugin = (digests: Map<string, string | undefined>): RsbuildPlugin => ({
   name: 'rstack-context:execution-sources',
   setup(api) {
-    api.transform({ order: 'pre', raw: true }, ({ code, resourcePath }) => {
+    const assetPrefix = '__rstack_context_execution_sources__/';
+    api.transform({ order: 'pre', raw: true }, ({ code, resourcePath, emitFile }) => {
       const digest = sha256Hex(code);
-      digests.set(
-        resourcePath,
-        digests.has(resourcePath) && digests.get(resourcePath) !== digest ? undefined : digest,
-      );
+      // Loader assets survive module cache restoration, when this callback does not run.
+      emitFile(`${assetPrefix}${sha256Hex(resourcePath)}/${digest}`, resourcePath);
       return code;
+    });
+    api.processAssets({ stage: 'additional' }, ({ assets, compilation }) => {
+      for (const [name, source] of Object.entries(assets)) {
+        if (!name.startsWith(assetPrefix)) continue;
+        const resourcePath = source.source().toString();
+        const digest = name.slice(name.lastIndexOf('/') + 1);
+        digests.set(
+          resourcePath,
+          digests.has(resourcePath) && digests.get(resourcePath) !== digest ? undefined : digest,
+        );
+        compilation.deleteAsset(name);
+      }
     });
   },
 });

@@ -383,7 +383,9 @@ Lint and test snapshots record input digests. Query results assess those inputs 
 workspace and report `fresh`, `stale`, `partial`, or `unknown` with changed paths where available.
 Build, lint, and test freshness remain independent.
 
-Execution digests come from source bytes observed during Rstest compilation. Files without a
+Execution digests come from source bytes observed during Rstest compilation. The observer stores
+each digest as a loader asset so Rspack restores it alongside cached modules; compilation consumes
+and removes these metadata assets before output. Files without a
 captured source version (including files reported only by coverage discovery or externalized
 modules) retain their coverage counts but cannot establish current-source execution evidence.
 Conflicting source versions within one capture also leave the digest unavailable.

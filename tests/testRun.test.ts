@@ -3,6 +3,7 @@ import { mkdir, readFile, realpath, symlink, unlink, writeFile } from 'node:fs/p
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type {
+  ProcessAssetsHandler,
   RsbuildPlugin,
   RsbuildPluginAPI,
   TransformContext,
@@ -67,6 +68,37 @@ const toNativeResult = (result: CapturedTestRunResult): TestRunResult => ({
   ...(result.coverage === undefined ? {} : { coverage: result.coverage }),
 });
 
+const createSourceObserver = async (plugin: RsbuildPlugin) => {
+  let transform: TransformHandler<true> | undefined;
+  let processAssets: ProcessAssetsHandler | undefined;
+  const assets: Parameters<ProcessAssetsHandler>[0]['assets'] = {};
+  await plugin.setup({
+    transform: (_descriptor, handler) => {
+      transform = handler as TransformHandler<true>;
+    },
+    processAssets: (_descriptor, handler) => {
+      processAssets = handler;
+    },
+  } as RsbuildPluginAPI);
+  return async (resourcePath: string, code: Buffer) => {
+    await transform!({
+      resourcePath,
+      code,
+      emitFile: (name, content) => {
+        assets[name] = { source: () => content } as (typeof assets)[string];
+      },
+    } as TransformContext<true>);
+    await processAssets!({
+      assets,
+      compilation: {
+        deleteAsset: (name: string) => {
+          delete assets[name];
+        },
+      },
+    } as Parameters<ProcessAssetsHandler>[0]);
+  };
+};
+
 const createDependencies = (
   result: CapturedTestRunResult,
   calls: unknown[],
@@ -82,23 +114,18 @@ const createDependencies = (
       dependencies: [],
     }),
   createRstest: async (options) => {
-    let transform: TransformHandler<true> | undefined;
+    let observeSource: Awaited<ReturnType<typeof createSourceObserver>> | undefined;
     const config = options?.config;
     if (config !== undefined && 'content' in config) {
       const plugin = config.content.plugins?.at(-1) as RsbuildPlugin | undefined;
-      await plugin?.setup({
-        transform: (_descriptor, handler) => {
-          transform = handler as TransformHandler<true>;
-        },
-      } as RsbuildPluginAPI);
+      if (plugin !== undefined) observeSource = await createSourceObserver(plugin);
     }
     return {
       listTests,
       run: async (options) => {
         for (const resourcePath of Object.keys(result.coverage ?? {})) {
           const code = await readFile(resourcePath).catch(() => undefined);
-          if (code !== undefined)
-            await transform?.({ code, resourcePath } as TransformContext<true>);
+          if (code !== undefined) await observeSource?.(resourcePath, code);
         }
         calls.push(options);
         return toNativeResult(result);
@@ -1749,7 +1776,7 @@ test('keeps unsupported execution controls out of snapshot requests', () => {
   expect(unsupportedRequestField).toBeUndefined();
 });
 
-test.each(['single', 'inline', 'file', 'mixed'] as const)(
+test.each(['single', 'cached', 'inline', 'file', 'glob', 'mixed'] as const)(
   'binds execution to compiled sources when a test edits its input (projects: %s)',
   async (projects) => {
     await withTempWorkspace('rstack-context-execution-', async (temporaryRoot) => {
@@ -1761,13 +1788,15 @@ test.each(['single', 'inline', 'file', 'mixed'] as const)(
       await writeFile(path.join(workspaceRoot, 'package.json'), '{"type":"module"}');
       await writeFile(
         path.join(workspaceRoot, 'rstest.config.mjs'),
-        projects === 'single'
-          ? 'export default { include: ["src/*.test.ts"] };'
+        projects === 'single' || projects === 'cached'
+          ? `export default { include: ["src/*.test.ts"], performance: {buildCache: ${projects === 'cached'}} };`
           : projects === 'inline'
             ? 'export default { projects: [{ name: "app", include: ["src/*.test.ts"] }] };'
             : projects === 'file'
               ? 'export default { projects: ["./project.config.mjs"] };'
-              : 'export default { projects: ["./project.config.mjs", {name: "inline", include: ["src/*.test.ts"]}] };',
+              : projects === 'glob'
+                ? 'export default { projects: ["./project.*.mjs"] };'
+                : 'export default { projects: ["./project.config.mjs", {name: "inline", include: ["src/*.test.ts"]}] };',
       );
       await writeFile(
         path.join(workspaceRoot, 'project.config.mjs'),
@@ -1786,7 +1815,7 @@ test('math', () => { expect(math()).toBe(1); EDIT_SOURCE });`;
       const request = { related: ['src/math.ts'], execution: { include: ['src/math.ts'] } };
       const initial = await captureTestSnapshot(workspaceRoot, request);
       expect(initial.status).toBe('pass');
-      const unbound = projects === 'file' || projects === 'mixed';
+      const unbound = projects === 'file' || projects === 'glob' || projects === 'mixed';
       await expect(
         readCodeEvidence(workspaceRoot, {
           path: 'src/math.ts',
@@ -1797,6 +1826,19 @@ test('math', () => { expect(math()).toBe(1); EDIT_SOURCE });`;
           ? { state: 'unknown', reason: 'digest-unavailable' }
           : { state: 'observed', fileDigest: sha256Hex(originalSource) },
       });
+
+      if (projects === 'cached') {
+        const restored = await captureTestSnapshot(workspaceRoot, request);
+        expect(restored.status).toBe('pass');
+        await expect(
+          readCodeEvidence(workspaceRoot, {
+            path: 'src/math.ts',
+            testSnapshotId: restored.snapshotId,
+          }),
+        ).resolves.toMatchObject({
+          executionCoverage: { state: 'observed', fileDigest: sha256Hex(originalSource) },
+        });
+      }
 
       await writeFile(
         testPath,
@@ -1821,6 +1863,25 @@ test('math', () => { expect(math()).toBe(1); EDIT_SOURCE });`;
           fileDigest: unbound ? undefined : sha256Hex(originalSource),
         },
       });
+      if (projects === 'cached') {
+        await writeFile(
+          testPath,
+          testSource.replace('EDIT_SOURCE', '').replace('toBe(1)', 'toBe(2)'),
+        );
+        const rebuilt = await captureTestSnapshot(workspaceRoot, request);
+        expect(rebuilt.status).toBe('pass');
+        await expect(
+          readCodeEvidence(workspaceRoot, {
+            path: 'src/math.ts',
+            testSnapshotId: rebuilt.snapshotId,
+          }),
+        ).resolves.toMatchObject({
+          executionCoverage: {
+            state: 'observed',
+            fileDigest: sha256Hex('export function math() { return 2; }\n'),
+          },
+        });
+      }
     });
   },
   15_000,
@@ -1842,12 +1903,7 @@ test('leaves coverage unbound when compiled source bytes are absent or conflict'
       },
     } as NonNullable<CapturedTestRunResult['coverage']>;
     const digests = new Map<string, string | undefined>();
-    let transform: TransformHandler<true> | undefined;
-    await createExecutionSourcePlugin(digests).setup({
-      transform: (_descriptor, handler) => {
-        transform = handler as TransformHandler<true>;
-      },
-    } as RsbuildPluginAPI);
+    const observeSource = await createSourceObserver(createExecutionSourcePlugin(digests));
     const absent = await normalizeExecutionFacet(
       workspaceRoot,
       workspaceRoot,
@@ -1859,10 +1915,7 @@ test('leaves coverage unbound when compiled source bytes are absent or conflict'
     expect(absent.universe.completeness).toBe('partial');
 
     for (const value of [1, 2, 2]) {
-      await transform!({
-        resourcePath: sourcePath,
-        code: Buffer.from(`export const value = ${value};`),
-      } as TransformContext<true>);
+      await observeSource(sourcePath, Buffer.from(`export const value = ${value};`));
     }
     const conflicting = await normalizeExecutionFacet(
       workspaceRoot,
