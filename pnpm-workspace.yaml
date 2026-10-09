@@ -1,0 +1,12 @@
+autoInstallPeers: false
+dedupePeers: true
+engineStrict: true
+
+minimumReleaseAge: 1440
+minimumReleaseAgeExclude:
+  - '@rsbuild/*'
+  - '@rsdoctor/*'
+  - '@rslib/*'
+  - '@rspack/*'
+  - '@rstest/*'
+  - 'rsbuild-plugin-*'
