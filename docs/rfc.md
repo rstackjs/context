@@ -47,12 +47,12 @@ guess which package, build, or source revision an observation describes. That be
 ambiguous in monorepos where several Rslib packages and one or more Rsbuild applications run at the
 same time.
 
-The context engine gives those independent processes a small rendezvous format and gives agent hosts
-one consistent query surface.
+The context engine stores observations from these processes in a shared format. Agent hosts query
+them through one MCP server.
 
 ## Goals
 
-- Provide one checkout-local MCP surface for Rstack evidence.
+- Provide one MCP server per checkout for Rstack evidence.
 - Work in Rslib-only, Rsbuild-only, and mixed workspaces.
 - Keep package and build identities independent from the MCP process current working directory.
 - Record completed observations as immutable, schema-versioned files.
@@ -383,20 +383,22 @@ Lint and test snapshots record input digests. Query results assess those inputs 
 workspace and report `fresh`, `stale`, `partial`, or `unknown` with changed paths where available.
 Build, lint, and test freshness remain independent.
 
-Execution digests come from source bytes observed during Rstest compilation. The observer stores
-each digest as a loader asset so Rspack restores it alongside cached modules; compilation consumes
-and removes these metadata assets before output. Files without a
-captured source version (including files reported only by coverage discovery or externalized
-modules) retain their coverage counts but cannot establish current-source execution evidence.
-Conflicting source versions within one capture also leave the digest unavailable.
-The source observer supports the root config and inline projects. When `projects` includes file
-paths or globs, Rstest loads those configs internally; aggregate coverage stays unbound rather
-than using digests from only some projects.
+The source observer hashes the bytes Rstest compiles. It stores each digest as a loader asset so
+Rspack can restore it with cached modules. The observer reads and removes these assets before
+output.
 
-Lint captures hash an explicit config, or config candidates along the selected file and package
-ancestor directories, before running Rslint. Lint freshness remains `partial` while recorded inputs
-match: Rslint does not expose a complete dependency set for imported configs, nested discovery, or
-type-aware rules. A change to a recorded source or config reports `stale`.
+Files without a captured digest retain coverage counts but cannot prove execution of the current
+source. This includes externalized modules and files found only through coverage discovery.
+Conflicting source versions in one capture also leave the digest unavailable.
+
+The observer supports the root config and inline projects. Rstest loads file and glob project
+configs internally. If any project uses those configs, Context cannot bind the combined coverage
+to source digests.
+
+Lint captures hash the explicit config before running Rslint. Without an explicit config, Context
+hashes config candidates in the selected file and package directories and their ancestors within
+the workspace. Matching inputs yield `partial` freshness because Rslint does not report all
+imported configs, nested configs, or type dependencies. Changes to recorded inputs yield `stale`.
 
 `snapshot_diff` compares only compatible immutable snapshots:
 
@@ -637,10 +639,10 @@ deletion oracle.
 Ownership stays upstream where the underlying facts are produced. Rstest owns instrumentation,
 coverage, related-test selection, watch-cycle events, and test-file attribution. Rspack and Rsdoctor
 own production and test module/export graphs plus product roots. Rstack owns immutable snapshots,
-exact identity and freshness joins, and the MCP and skill surfaces that explain the combined
-evidence; it should not duplicate those compiler graphs or test instrumentation.
+exact identity and freshness joins, and the MCP tools and skills that explain the combined
+evidence. It should not duplicate those compiler graphs or test instrumentation.
 
-The lean delivery sequence is:
+The delivery sequence is:
 
 1. Aggregate existing Istanbul evidence into immutable snapshots and expose it through bounded
    exact-path composition. This branch implements this step.
@@ -667,7 +669,7 @@ The following are potential later work, not part of the implemented contract:
 - CI artifact import/export and performance gates;
 - source mutation and apply/verify flows;
 - retention policies beyond disposable cache cleanup;
-- a coordinator daemon, remote transport, or custom visual surface; and
+- a coordinator daemon, remote transport, or custom user interface; and
 - repository-wide claims that combine several artifact graphs automatically.
 
 These additions should continue using the same workspace, context, run, snapshot, and provenance

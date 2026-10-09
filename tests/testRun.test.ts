@@ -1786,17 +1786,18 @@ test.each(['single', 'cached', 'inline', 'file', 'glob', 'mixed'] as const)(
         path.join(workspaceRoot, 'node_modules'),
       );
       await writeFile(path.join(workspaceRoot, 'package.json'), '{"type":"module"}');
+      const inlineProject = { name: 'app', include: ['src/*.test.ts'] };
+      const config = {
+        single: { include: ['src/*.test.ts'] },
+        cached: { include: ['src/*.test.ts'], performance: { buildCache: true } },
+        inline: { projects: [inlineProject] },
+        file: { projects: ['./project.config.mjs'] },
+        glob: { projects: ['./project.*.mjs'] },
+        mixed: { projects: ['./project.config.mjs', inlineProject] },
+      }[projects];
       await writeFile(
         path.join(workspaceRoot, 'rstest.config.mjs'),
-        projects === 'single' || projects === 'cached'
-          ? `export default { include: ["src/*.test.ts"], performance: {buildCache: ${projects === 'cached'}} };`
-          : projects === 'inline'
-            ? 'export default { projects: [{ name: "app", include: ["src/*.test.ts"] }] };'
-            : projects === 'file'
-              ? 'export default { projects: ["./project.config.mjs"] };'
-              : projects === 'glob'
-                ? 'export default { projects: ["./project.*.mjs"] };'
-                : 'export default { projects: ["./project.config.mjs", {name: "inline", include: ["src/*.test.ts"]}] };',
+        `export default ${JSON.stringify(config)};`,
       );
       await writeFile(
         path.join(workspaceRoot, 'project.config.mjs'),
@@ -1904,20 +1905,14 @@ test('leaves coverage unbound when compiled source bytes are absent or conflict'
     } as NonNullable<CapturedTestRunResult['coverage']>;
     const digests = new Map<string, string | undefined>();
     const observeSource = await createSourceObserver(createExecutionSourcePlugin(digests));
-    const absent = await normalizeExecutionFacet(
-      workspaceRoot,
-      workspaceRoot,
-      {},
-      coverage,
-      digests,
-    );
+    const absent = normalizeExecutionFacet(workspaceRoot, workspaceRoot, {}, coverage, digests);
     expect(absent.files[0]?.digest).toBeUndefined();
     expect(absent.universe.completeness).toBe('partial');
 
     for (const value of [1, 2, 2]) {
       await observeSource(sourcePath, Buffer.from(`export const value = ${value};`));
     }
-    const conflicting = await normalizeExecutionFacet(
+    const conflicting = normalizeExecutionFacet(
       workspaceRoot,
       workspaceRoot,
       {},

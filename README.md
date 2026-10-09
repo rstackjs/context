@@ -41,7 +41,7 @@ The factory enables metadata capture by default. Set `capture: 'off'`, or set
 
 ## Run the MCP server
 
-The package exports a programmatic stdio entry point rather than adding a custom CLI command.
+The package exports a programmatic stdio entry point.
 
 For an MCP host configuration:
 
@@ -82,7 +82,7 @@ pnpm test
 ```
 
 The package uses Rslib for builds, Rstest for tests, and Rslint for lint and type-aware checks.
-Rsbuild remains a public integration surface for build-context observers. See the
+Build-context observers use Rsbuild's public APIs. See the
 [context engine RFC](./docs/rfc.md) for the evidence model.
 
 Execution coverage evidence is optional and resolved against the package under test, not against

@@ -327,25 +327,21 @@ const createNativeRstest = async (
   sourceDigests?: Map<string, string | undefined>,
 ): Promise<{ configPath: string; runtime: RstestRuntime }> => {
   const config = await loadNativeRstestConfig(workspaceRoot, packageRoot, configPath, loadConfig);
+  const { projects } = config.content;
   // File/glob projects are loaded internally by Rstest and cannot receive this observer.
   // Do not bind aggregate coverage using only a subset of the participating projects.
   if (
     sourceDigests !== undefined &&
-    !config.content.projects?.some((project) => typeof project === 'string')
+    (projects === undefined || projects.every((project) => typeof project !== 'string'))
   ) {
     const plugin = createExecutionSourcePlugin(sourceDigests);
     config.content = {
       ...config.content,
       plugins: [...(config.content.plugins ?? []), plugin],
-      ...(config.content.projects === undefined
-        ? {}
-        : {
-            projects: config.content.projects.map((project) =>
-              typeof project === 'string'
-                ? project
-                : { ...project, plugins: [...(project.plugins ?? []), plugin] },
-            ),
-          }),
+      projects: projects?.map((project) => ({
+        ...project,
+        plugins: [...(project.plugins ?? []), plugin],
+      })),
     };
   }
   return {
@@ -572,7 +568,7 @@ const captureTestSnapshot = async (
       ? undefined
       : !captureExecution
         ? unavailableExecutionFacet(execution)
-        : await normalizeExecutionFacet(
+        : normalizeExecutionFacet(
             workspaceRoot,
             target.packageRoot,
             execution,

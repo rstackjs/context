@@ -271,13 +271,13 @@ const unavailableExecutionFacet = (request: TestExecutionRequest): TestExecution
     files: [],
   });
 
-const normalizeExecutionFacet = async (
+const normalizeExecutionFacet = (
   workspaceRoot: string,
   packageRoot: string,
   request: TestExecutionRequest,
   coverage: TestRunResult['coverage'],
   sourceDigests: ReadonlyMap<string, string | undefined>,
-): Promise<TestExecutionFacet> => {
+): TestExecutionFacet => {
   if (!isRecordObject(coverage)) return unavailableExecutionFacet(request);
 
   const candidates = sortedRecordEntries<CoverageMapFileEntry>(coverage)
