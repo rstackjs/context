@@ -4,12 +4,12 @@ This file lists only gaps that remain after Context moved out of Rstack CLI.
 
 ## Rstack shared configuration
 
-[RFC #504](https://github.com/rstackjs/rstack-cli/discussions/504) is the only required Rstack
-integration. Internal layer primitives and shared-config normalization have landed, while public
-`define.extends()`, shared-layer loading, and the remaining merge paths are still incomplete.
+[RFC #504](https://github.com/rstackjs/rstack-cli/discussions/504) shipped in
+[Rstack 0.8.2](https://github.com/rstackjs/rstack-cli/releases/tag/v0.8.2). The public
+`define.extends()` API, `RstackConfig` type, layer loading, and tool merges are available.
 
-Context's `@rstackjs/context/shared-config` export must remain draft-gated until a released Rstack
-package provides the complete public contract and an App/Lib integration fixture passes.
+Context checks its shared-config factory against the public type and tests App and Lib builds
+with Rstack 0.8.4. This integration no longer has an upstream API blocker.
 
 ## Rsbuild stats
 

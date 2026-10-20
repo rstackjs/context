@@ -2,9 +2,9 @@
 
 ## Status
 
-Revised on 2026-09-23 after
-[Rstack RFC #504](https://github.com/rstackjs/rstack-cli/discussions/504) replaced the proposed
-Context-specific CLI plugin system.
+Updated on 2026-10-20. Rstack shipped the shared-configuration API from
+[RFC #504](https://github.com/rstackjs/rstack-cli/discussions/504) in 0.8.2. Context validates its
+integration against Rstack 0.8.4 and stable Rslib 1.0.3.
 
 ## Decision
 
@@ -38,20 +38,20 @@ flowchart LR
 The stdio process is started by importing `runContextMcpServer()`. It is not a package binary or a
 custom Rstack command.
 
-## Shared-config gate
+## Shared-config integration
 
-Passive build integration uses `@rstackjs/context/shared-config`, but it remains release-gated until
-Rstack publishes the complete RFC #504 contract:
+`@rstackjs/context/shared-config` returns ordinary shared configurations for `define.extends()`.
+The factory checks its return value against Rstack's public `RstackConfig` type at build time.
+Its published declarations keep the narrower Context type, so standalone consumers do not need
+Rstack installed.
 
-- public `RstackConfig`;
-- public `define.extends()`;
-- shared-layer loading;
-- App and Lib native merges; and
-- merged Test configuration before automatic App-versus-Lib inheritance.
+Rstack loads shared layers, merges App and Lib settings, and resolves test inheritance. Context
+adds the build observer to the selected products. It does not implement a second config loader
+or merge policy. Native CLI tests cover both products, nested layers, local overrides, disabled
+capture, config provenance, and automatic test inheritance.
 
-The package can still ship and run its MCP, lint, test, Rsdoctor, store, and query features without
-that Rstack release. Documentation must not present passive build setup as currently available until
-the gate is satisfied.
+Rstack is a development dependency for these checks. MCP, native lint and test capture, Rsdoctor,
+and store queries still run independently of the CLI.
 
 ## Native test boundary
 
@@ -79,7 +79,7 @@ The repository must pass:
 - frozen install;
 - Rslint type-aware checks and formatting;
 - Rslib build and declaration generation;
-- the full Rstest suite;
+- the full Rstest suite, including native `rs build`, `rs lib build`, and `rs test run` fixtures;
 - real stdio MCP initialization;
 - native Rstest related preflight and execution;
 - missing-config rejection before `createRstest`;

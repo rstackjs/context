@@ -7,14 +7,14 @@ Rstack shared configuration.
 
 ## Add build context
 
-> [!IMPORTANT]
-> This integration requires the public `define.extends()` API proposed in
-> [Rstack RFC #504](https://github.com/rstackjs/rstack-cli/discussions/504). The lower-level
-> implementation is still landing in Rstack, so keep this setup gated until a released Rstack
-> version exports that API.
+Use Rstack 0.8.4 or later for the tested shared-config integration. Install Context alongside
+Rstack in the consuming project:
 
-After that API is released, install `@rstackjs/context` and add its shared configuration to
-`rstack.config.ts`:
+```bash
+pnpm add -D @rstackjs/context rstack@^0.8.4
+```
+
+Add its shared configuration to `rstack.config.ts`:
 
 ```ts
 import { createRstackContextConfig } from '@rstackjs/context/shared-config';
@@ -31,10 +31,22 @@ define.app({
 });
 ```
 
-Use `products: 'library'` for a library-only project, or
-`products: ['application', 'library']` when the same Rstack configuration intentionally defines
+For a library, select the library product and configure Rslib:
+
+```ts
+import { createRstackContextConfig } from '@rstackjs/context/shared-config';
+import { define } from 'rstack';
+
+define.extends([createRstackContextConfig({ products: 'library' })]);
+define.lib({ lib: [{ format: 'esm' }, { format: 'cjs' }] });
+```
+
+Use `products: ['application', 'library']` when the same Rstack configuration intentionally defines
 both. Product selection is explicit so adding Context does not change Rstack's automatic Rstest
 App-versus-Lib inheritance.
+
+Run `rs build` for applications or `rs lib build` for libraries. Each completed build writes
+metadata to `.rstack/cache/context-v1` in the workspace root.
 
 The factory enables metadata capture by default. Set `capture: 'off'`, or set
 `RSTACK_CONTEXT=0`, to disable it. `RSTACK_CONTEXT=1` enables metadata capture for an invocation.

@@ -15,7 +15,7 @@ const repositoryRoot = path.resolve(import.meta.dirname, '..');
 const readPackageJson = async (): Promise<PackageJson> =>
   JSON.parse(await readFile(path.join(repositoryRoot, 'package.json'), 'utf8')) as PackageJson;
 
-test('publishes focused Context entry points without a Rstack dependency', async () => {
+test('publishes focused Context entry points without a Rstack runtime or peer dependency', async () => {
   const packageJson = await readPackageJson();
 
   expect(Object.keys(packageJson.exports ?? {}).sort()).toEqual([
@@ -34,13 +34,14 @@ test('publishes focused Context entry points without a Rstack dependency', async
   expect(packageJson.dependencies?.['@rsdoctor/agent-cli']).toBeUndefined();
   expect(packageJson.devDependencies?.['@rsdoctor/agent-cli']).toBe('0.1.2');
   expect(packageJson.peerDependencies?.['@rsdoctor/agent-cli']).toBe('>=0.1.2');
-  for (const section of [
-    packageJson.dependencies,
-    packageJson.devDependencies,
-    packageJson.peerDependencies,
-  ]) {
+  for (const section of [packageJson.dependencies, packageJson.peerDependencies]) {
     expect(section?.rstack).toBeUndefined();
   }
+  const sharedConfigTypes = await readFile(
+    path.join(repositoryRoot, 'dist/sharedConfig.d.ts'),
+    'utf8',
+  );
+  expect(sharedConfigTypes).not.toMatch(/from ['"]rstack(?:\/[^'"]*)?['"]/);
 });
 
 test('loads each focused Context entry point independently', () => {

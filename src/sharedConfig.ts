@@ -1,4 +1,5 @@
 import type { ConfigParams, RsbuildConfig } from '@rsbuild/core';
+import type { RstackConfig } from 'rstack';
 import { createBuildContextPlugin } from './build.ts';
 import { resolveContextCapture, type ContextConfig } from './config.ts';
 
@@ -70,7 +71,7 @@ const createRstackContextConfig = (options: RstackContextConfigOptions): Context
     ...(products.has('library')
       ? { lib: createConfigFactory('rslib', 'library', factoryOptions) }
       : {}),
-  };
+  } satisfies RstackConfig;
 };
 
 export { createRstackContextConfig };
