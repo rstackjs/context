@@ -2,9 +2,9 @@
 
 ## Status
 
-Updated on 2026-10-20. Rstack shipped the shared-configuration API from
+Updated on 2026-10-22. Rstack shipped the shared-configuration API from
 [RFC #504](https://github.com/rstackjs/rstack-cli/discussions/504) in 0.8.2. Context validates its
-integration against Rstack 0.8.4 and stable Rslib 1.0.3.
+integration against Rstack 0.8.5 and stable Rslib 1.0.4.
 
 ## Decision
 

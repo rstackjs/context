@@ -9,7 +9,7 @@ This file lists only gaps that remain after Context moved out of Rstack CLI.
 `define.extends()` API, `RstackConfig` type, layer loading, and tool merges are available.
 
 Context checks its shared-config factory against the public type and tests App and Lib builds
-with Rstack 0.8.4. This integration no longer has an upstream API blocker.
+with Rstack 0.8.5. This integration no longer has an upstream API blocker.
 
 ## Rsbuild stats
 

@@ -150,7 +150,9 @@ test('keeps the coverage provider out of the published dependency surface', asyn
   // The Istanbul provider is resolved from the package under test, so declaring it as a
   // peer of this package could not satisfy the runtime lookup; it stays a dev-only dependency.
   expect(packageJson.dependencies?.['@rstest/coverage-istanbul']).toBeUndefined();
-  expect(packageJson.devDependencies?.['@rstest/coverage-istanbul']).toBe('0.12.1');
+  expect(packageJson.devDependencies?.['@rstest/coverage-istanbul']).toBe(
+    packageJson.dependencies?.['@rstest/core'],
+  );
   expect(packageJson.peerDependencies?.['@rstest/coverage-istanbul']).toBeUndefined();
   expect(packageJson.peerDependenciesMeta?.['@rstest/coverage-istanbul']).toBeUndefined();
 

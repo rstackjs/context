@@ -135,7 +135,7 @@ publish their results after the one-shot command completes.
 `@rstackjs/context` owns the store, producer adapters, normalized evidence, queries, build observer,
 and MCP implementation. Rstack integration uses the released `define.extends()` API from RFC #504.
 Rstack owns layer loading, tool-specific merges, and test inheritance. Context adds build observers
-through the selected App and Lib configs. Native CLI fixtures validate this with Rstack 0.8.4.
+through the selected App and Lib configs. Native CLI fixtures validate this with Rstack 0.8.5.
 Explicit lint and test captures use native producer configuration and do not depend on Rstack CLI.
 
 ### Monorepo process model
